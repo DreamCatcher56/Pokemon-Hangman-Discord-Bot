@@ -1,0 +1,373 @@
+Adaptability
+Aerilate
+Aftermath
+Air Lock
+Analytic
+Anger Point
+Anger Shell
+Anticipation
+Aqua Boost
+Arena Trap
+Armor Tail
+Aroma Veil
+As One Glastrier
+As One Spectrier
+Aura Break
+Bad Dreams
+Ball Fetch
+Battery
+Battle Armor
+Battle Bond
+Beads Of Ruin
+Beast Boost
+Berserk
+Big Pecks
+Black Hole
+Blaze
+Bodyguard
+Bonanza
+Bulletproof
+Calming
+Celebrate
+Cheek Pouch
+Chilling Neigh
+Chlorophyll
+Clear Body
+Climber
+Cloud Nine
+Color Change
+Comatose
+Commander
+Competitive
+Compound Eyes
+Confidence
+Conqueror
+Contrary
+Corrosion
+Costar
+Cotton Down
+Cud Chew
+Curious Medicine
+Cursed Body
+Cute Charm
+Damp
+Dancer
+Dark Aura
+Dauntless Shield
+Daze
+Dazzling
+Decoy
+Deep Sleep
+Defeatist
+Defiant
+Delta Stream
+Desolate Land
+Disguise
+Disgust
+Dodge
+Download
+Dragonize
+Dragons Maw
+Drizzle
+Drought
+Dry Skin
+Early Bird
+Earth Eater
+Eelevate
+Effect Spore
+Electric Surge
+Electromorphosis
+Embody Aspect
+Emergency Exit
+Explode
+Fairy Aura
+Filter
+Fire Mane
+Flame Body
+Flame Boost
+Flare Boost
+Flash Fire
+Flower Gift
+Flower Veil
+Fluffy
+Forecast
+Forewarn
+Fortune
+Friend Guard
+Frighten
+Frisk
+Frostbite
+Full Metal Body
+Fur Coat
+Gale Wings
+Galvanize
+Gluttony
+Good As Gold
+Gooey
+Gorilla Tactics
+Grass Cloak
+Grass Pelt
+Grassy Surge
+Grim Neigh
+Guard Dog
+Gulp
+Gulp Missile
+Guts
+Hadron Engine
+Harvest
+Healer
+Heatproof
+Heavy Metal
+Herbivore
+Hero
+High Rise
+Honey Gather
+Hospitality
+Hot Blooded
+Huge Power
+Hunger Switch
+Hustle
+Hydration
+Hyper Cutter
+Ice Body
+Ice Face
+Ice Scales
+Illuminate
+Illusion
+Immunity
+Imposter
+Infiltrator
+Innards Out
+Inner Focus
+Insomnia
+Instinct
+Interference
+Intimidate
+Intrepid Sword
+Iron Barbs
+Iron Fist
+Jagged Edge
+Justified
+Keen Eye
+Klutz
+Last Bastion
+Leaf Guard
+Levitate
+Libero
+Life Force
+Light Metal
+Lightning Rod
+Limber
+Lingering Aroma
+Liquid Ooze
+Liquid Voice
+Long Reach
+Lullaby
+Lunchbox
+Magic Bounce
+Magic Guard
+Magician
+Magma Armor
+Magnet Pull
+Marvel Scale
+Medic
+Mega Launcher
+Mega Sol
+Melee
+Merciless
+Mimicry
+Minds Eye
+Minus
+Mirror Armor
+Misty Surge
+Mold Breaker
+Mood Maker
+Moody
+Motor Drive
+Mountaineer
+Moxie
+Multiscale
+Multitype
+Mummy
+Mycelium Might
+Natural Cure
+Neuroforce
+Neutralizing Gas
+No Guard
+Nomad
+Normalize
+Nurse
+Oblivious
+Omnipotent
+Opportunist
+Orichalcum Pulse
+Overcoat
+Overgrow
+Own Tempo
+Parental Bond
+Parry
+Pastel Veil
+Perception
+Perish Body
+Pickpocket
+Pickup
+Piercing Drill
+Pixilate
+Plus
+Poison Heal
+Poison Point
+Poison Puppeteer
+Poison Touch
+Power Construct
+Power Nap
+Power Of Alchemy
+Power Spot
+Prankster
+Pressure
+Pride
+Primordial Sea
+Prism Armor
+Propeller Tail
+Protean
+Protosynthesis
+Psychic Surge
+Punk Rock
+Pure Power
+Purifying Salt
+Quark Drive
+Queenly Majesty
+Quick Draw
+Quick Feet
+Rain Dish
+Rattled
+Receiver
+Reckless
+Refrigerate
+Regenerator
+Ripen
+Rivalry
+Rks System
+Rock Head
+Rocky Payload
+Rough Skin
+Run Away
+Run Up
+Sand Force
+Sand Rush
+Sand Spit
+Sand Stream
+Sand Veil
+Sandpit
+Sap Sipper
+Schooling
+Scrappy
+Screen Cleaner
+Seed Sower
+Sequence
+Serene Grace
+Shackle
+Shadow Dash
+Shadow Shield
+Shadow Tag
+Share
+Sharpness
+Shed Skin
+Sheer Force
+Shell Armor
+Shield
+Shield Dust
+Shields Down
+Simple
+Skater
+Skill Link
+Slow Start
+Slush Rush
+Sniper
+Snow Cloak
+Snow Warning
+Solar Power
+Solid Rock
+Soul Heart
+Soundproof
+Speed Boost
+Spicy Spray
+Spirit
+Sponge
+Sprint
+Stakeout
+Stall
+Stalwart
+Stamina
+Stance Change
+Static
+Steadfast
+Stealth
+Steam Engine
+Steelworker
+Steely Spirit
+Stench
+Sticky Hold
+Storm Drain
+Strong Jaw
+Sturdy
+Suction Cups
+Super Luck
+Supersweet Syrup
+Supreme Overlord
+Surge Surfer
+Swarm
+Sweet Veil
+Swift Swim
+Sword Of Ruin
+Symbiosis
+Synchronize
+Tablets Of Ruin
+Tangled Feet
+Tangling Hair
+Technician
+Telepathy
+Tenacity
+Tera Shell
+Tera Shift
+Teraform Zero
+Teravolt
+Thermal Exchange
+Thick Fat
+Thrust
+Tinted Lens
+Torrent
+Tough Claws
+Toxic Boost
+Toxic Chain
+Toxic Debris
+Trace
+Transistor
+Triage
+Truant
+Turboblaze
+Unaware
+Unburden
+Unnerve
+Unseen Fist
+Vanguard
+Vessel Of Ruin
+Victory Star
+Vital Spirit
+Volt Absorb
+Wandering Spirit
+Warm Blanket
+Water Absorb
+Water Bubble
+Water Compaction
+Water Veil
+Wave Rider
+Weak Armor
+Well Baked Body
+White Smoke
+Wimp Out
+Wind Power
+Wind Rider
+Wonder Guard
+Wonder Skin
+Zen Mode
+Zero To Hero
