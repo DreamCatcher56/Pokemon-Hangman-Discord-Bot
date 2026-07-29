@@ -3,8 +3,7 @@ Absorb
 Accelerock
 Acid
 Acid Armor
-Acid Downpour  Physical
-Acid Downpour  Special
+Acid Downpour
 Acid Spray
 Acrobatics
 Acupressure
@@ -14,8 +13,7 @@ After You
 Agility
 Air Cutter
 Air Slash
-All Out Pummeling  Physical
-All Out Pummeling  Special
+All Out Pummeling
 Alluring Voice
 Ally Switch
 Amnesia
@@ -63,8 +61,7 @@ Bind
 Bite
 Bitter Blade
 Bitter Malice
-Black Hole Eclipse  Physical
-Black Hole Eclipse  Special
+Black Hole Eclipse
 Blast Burn
 Blaze Kick
 Blazing Torque
@@ -72,8 +69,7 @@ Bleakwind Storm
 Blizzard
 Block
 Blood Moon
-Bloom Doom  Physical
-Bloom Doom  Special
+Bloom Doom
 Blue Flare
 Body Press
 Body Slam
@@ -88,8 +84,7 @@ Bouncy Bubble
 Branch Poke
 Brave Bird
 Breaking Swipe
-Breakneck Blitz  Physical
-Breakneck Blitz  Special
+Breakneck Blitz
 Brick Break
 Brine
 Brutal Swing
@@ -136,14 +131,12 @@ Confide
 Confuse Ray
 Confusion
 Constrict
-Continental Crush  Physical
-Continental Crush  Special
+Continental Crush
 Conversion
 Conversion 2
 Copycat
 Core Enforcer
-Corkscrew Crash  Physical
-Corkscrew Crash  Special
+Corkscrew Crash
 Corrosive Gas
 Cosmic Power
 Cotton Guard
@@ -170,8 +163,7 @@ Defense Curl
 Defog
 Destiny Bond
 Detect
-Devastating Drake  Physical
-Devastating Drake  Special
+Devastating Drake
 Diamond Storm
 Dig
 Dire Claw
@@ -311,8 +303,7 @@ Geomancy
 Giga Drain
 Giga Impact
 Gigaton Hammer
-Gigavolt Havoc  Physical
-Gigavolt Havoc  Special
+Gigavolt Havoc
 Glacial Lance
 Glaciate
 Glaive Rush
@@ -371,8 +362,7 @@ Hurricane
 Hydro Cannon
 Hydro Pump
 Hydro Steam
-Hydro Vortex  Physical
-Hydro Vortex  Special
+Hydro Vortex
 Hyper Beam
 Hyper Drill
 Hyper Fang
@@ -395,8 +385,7 @@ Imprison
 Incinerate
 Infernal Parade
 Inferno
-Inferno Overdrive  Physical
-Inferno Overdrive  Special
+Inferno Overdrive
 Infestation
 Ingrain
 Instruct
@@ -529,8 +518,7 @@ Natural Gift
 Nature Power
 Natures Madness
 Needle Arm
-Never Ending Nightmare  Physical
-Never Ending Nightmare  Special
+Never Ending Nightmare
 Night Daze
 Night Shade
 Night Slash
@@ -666,8 +654,7 @@ Sand Tomb
 Sandsear Storm
 Sandstorm
 Sappy Seed
-Savage Spin Out  Physical
-Savage Spin Out  Special
+Savage Spin Out
 Scald
 Scale Shot
 Scary Face
@@ -707,8 +694,7 @@ Shadow Sneak
 Shadow Storm
 Shadow Wave
 Sharpen
-Shattered Psyche Physical
-Shattered Psyche Special
+Shattered Psyche
 Shed Tail
 Sheer Cold
 Shell Side Arm
@@ -804,8 +790,7 @@ Stuff Cheeks
 Stun Spore
 Submission
 Substitute
-Subzero Slammer  Physical
-Subzero Slammer  Special
+Subzero Slammer
 Sucker Punch
 Sunny Day
 Sunsteel Strike

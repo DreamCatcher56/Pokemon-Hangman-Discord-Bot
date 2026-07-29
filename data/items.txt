@@ -1099,7 +1099,6 @@ Sea Incense
 Seal Bag
 Seal Case
 Secret Key
-Secret Key  Letsgo
 Secret Potion
 Seedot Stem
 Seel Candy
@@ -1165,8 +1164,7 @@ Smooth Rock
 Sneasel Claw
 Snom Thread
 Snorlax Candy
-Snorlium Z  Bag
-Snorlium Z  Held
+Snorlium Z
 Snorunt Fur
 Snover Berries
 Snow Mail
@@ -1216,8 +1214,7 @@ Steel Gem
 Steel Mail
 Steel Memory
 Steel Tera Shard
-Steelium Z  Bag
-Steelium Z  Held
+Steelium Z
 Steelixite
 Stick
 Sticky Barb
@@ -1261,8 +1258,7 @@ Tamato Berry
 Tandemaus Fur
 Tanga Berry
 Tangela Candy
-Tapunium Z  Bag
-Tapunium Z  Held
+Tapunium Z
 Tarountula Thread
 Tart Apple
 Tatsugiri Scales
