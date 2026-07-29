@@ -334,7 +334,7 @@ Exp Share
 Expert Belt
 Explorer Kit
 Fab Mail
-Fairium Z ld
+Fairium Z
 Fairy Feather
 Fairy Gem
 Fairy Memory
@@ -363,8 +363,8 @@ Fire Memory
 Fire Pattern Cup
 Fire Stone
 Fire Tera Shard
-Firium Z  Bag
-Firium Z  Held
+Firium Z
+Firium Z
 Fishing Rod
 Fishing Rod  Galar
 Fist Plate
@@ -538,8 +538,8 @@ Ice Stone
 Ice Tera Shard
 Iceroot Carrot
 Icicle Plate
-Icium Z  Bag
-Icium Z  Held
+Icium Z
+Icium Z
 Icy Rock
 Igglybuff Fluff
 Ilimas Normalium Z
@@ -743,8 +743,8 @@ Meteorite
 Meteorite Shard
 Metronome
 Mew Candy
-Mewnium Z  Bag
-Mewnium Z  Held
+Mewnium Z
+Mewnium Z
 Mewtwo Candy
 Mewtwonite X
 Mewtwonite Y

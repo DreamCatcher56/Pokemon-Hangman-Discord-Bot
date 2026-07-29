@@ -259,7 +259,6 @@ Electabuzz
 Electivire
 Electrike
 Electrode
-Electrode Hisui
 Elekid
 Elgyem
 Emboar
