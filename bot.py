@@ -503,7 +503,11 @@ class BlitzTimeGame:
 
     async def end_game(self):
         self.active = False
-        if self._timeout_task:
+        # end_game() can run *inside* self._timeout_task (the 100s timer
+        # firing calls this directly) - cancelling it here would throw
+        # CancelledError into this very coroutine at the next await below,
+        # killing it before the score gets recorded or the embed gets sent.
+        if self._timeout_task and self._timeout_task is not asyncio.current_task():
             self._timeout_task.cancel()
         active_blitz_games.pop(self.channel.id, None)
 
@@ -527,7 +531,7 @@ class BlitzTimeGame:
 
     async def cancel(self, cancelled_by: discord.Member):
         self.active = False
-        if self._timeout_task:
+        if self._timeout_task and self._timeout_task is not asyncio.current_task():
             self._timeout_task.cancel()
         active_blitz_games.pop(self.channel.id, None)
         await self.channel.send(f"🛑 Blitz round cancelled by **{cancelled_by.display_name}**.")
