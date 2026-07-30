@@ -33,6 +33,13 @@ DATA_FILES = {
     "Item": "data/items.txt",
 }
 
+# Same categories as regular hangman, except Items are pulled from a
+# separate curated list for the blitz modes.
+BLITZ_DATA_FILES = {
+    **DATA_FILES,
+    "Item": "data/blitzitems.txt",
+}
+
 DEFAULT_ROUNDS_PER_GAME = 7
 MIN_ROUNDS = 1
 MAX_ROUNDS = 20
@@ -64,9 +71,9 @@ active_blitz_games: dict[int, "BlitzTimeGame | BlitzSpeedGame"] = {}
 # Word list loading
 # ---------------------------------------------------------------------------
 
-def load_word_lists() -> dict[str, list[str]]:
+def load_word_lists(data_files: dict[str, str] = DATA_FILES) -> dict[str, list[str]]:
     lists = {}
-    for category, path in DATA_FILES.items():
+    for category, path in data_files.items():
         if not os.path.exists(path):
             raise FileNotFoundError(f"Missing {path}.")
         with open(path, "r", encoding="utf-8") as f:
@@ -726,7 +733,7 @@ async def blitz1_start(ctx: commands.Context):
         return
 
     try:
-        word_lists = load_word_lists()
+        word_lists = load_word_lists(BLITZ_DATA_FILES)
     except (FileNotFoundError, ValueError) as e:
         await ctx.send(f"⚠️ Can't start a game: {e}")
         return
@@ -747,7 +754,7 @@ async def blitz2_start(ctx: commands.Context):
         return
 
     try:
-        word_lists = load_word_lists()
+        word_lists = load_word_lists(BLITZ_DATA_FILES)
     except (FileNotFoundError, ValueError) as e:
         await ctx.send(f"⚠️ Can't start a game: {e}")
         return
