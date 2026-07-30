@@ -90,8 +90,8 @@ Big Mushroom
 Big Nugget
 Big Pearl
 Big Root
-Bike  Green
-Bike  Yellow
+Bike Green
+Bike Yellow
 Bike Voucher
 Binding Band
 Bitter Herba Mystica
@@ -592,21 +592,21 @@ Kricketot Shell
 Lafeather Ball
 Lagging Tail
 Lagigaton Ball
-Lagreat Ball
-Laheavy Ball
-Lajet Ball
-Laleaden Ball
+Great Ball
+Heavy Ball
+Jet Ball
+Leaden Ball
 Lansat Berry
-Laorigin Ball
-Lapoke Ball
+Origin Ball
+Poke Ball
 Lapras Candy
 Large Leek
 Larvesta Fuzz
 Larvitar Claw
-Lastrange Ball
+Strange Ball
 Latiasite
 Latiosite
-Laultra Ball
+Ultra Ball
 Lava Cookie
 Lawing Ball
 Lax Incense
@@ -838,7 +838,7 @@ Paralyze Heal
 Paras Candy
 Parasol Pick
 Parcel
-Parcel  Letsgo
+Parcel Letsgo
 Park Ball
 Party Sparkler Pick
 Pass
