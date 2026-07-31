@@ -2,7 +2,6 @@ Ability Capsule
 Ability Shield
 Abomasite
 Absolite
-Absolite Z
 Absorb Bulb
 Acro Bike
 Adamant Crystal
@@ -26,9 +25,7 @@ Awakening
 Azure Flute
 Babiri Berry
 Banettite
-Barbaracite
 Basement Key
-Baxcalibrite
 Beast Ball
 Beedrillite
 Belue Berry
@@ -65,14 +62,12 @@ Carbos
 Card Key
 Careful Mint
 Cell Battery
-Chandelurite
 Charcoal
 Charizardite X
 Charizardite Y
 Charti Berry
 Cheri Berry
 Cherish Ball
-Chesnaughtite
 Chesto Berry
 Chilan Berry
 Chill Drive
@@ -82,7 +77,6 @@ Choice Specs
 Chople Berry
 Cleanse Tag
 Clear Amulet
-Clefablite
 Clever Wing
 Coba Berry
 Coin Case
@@ -90,7 +84,6 @@ Colbur Berry
 Comet Shard
 Cornerstone Mask
 Covert Cloak
-Crabominite
 Custap Berry
 Damp Rock
 Dark Gem
@@ -98,11 +91,9 @@ Dark Memory
 Dark Stone
 Dark Tera Shard
 Darkinium Z
-Darkranite
 Dawn Stone
 Deep Sea Scale
 Deep Sea Tooth
-Delphoxite
 Destiny Knot
 Diancite
 Dire Hit
@@ -112,16 +103,13 @@ Dome Fossil
 Douse Drive
 Dowsing Machine
 Draco Plate
-Dragalgite
 Dragon Fang
 Dragon Gem
 Dragon Memory
 Dragon Scale
 Dragon Skull
 Dragon Tera Shard
-Dragoninite
 Dragonium Z
-Drampanite
 Dread Plate
 Dream Ball
 Dubious Disc
@@ -132,7 +120,6 @@ Dynamax Band
 Dynamax Candy
 Dynite Ore
 Earth Plate
-Eelektrossite
 Eevium Z
 Egg
 Eject Button
@@ -145,7 +132,6 @@ Electric Tera Shard
 Electrium Z
 Elevator Key
 Elixir
-Emboarite
 Energy Powder
 Energy Root
 Enigma Berry
@@ -153,7 +139,6 @@ Escape Rope
 Ether
 Everstone
 Eviolite
-Excadrite
 Exp Candy
 Exp Charm
 Exp Share
@@ -163,9 +148,7 @@ Fairy Feather
 Fairy Gem
 Fairy Memory
 Fairy Tera Shard
-Falinksite
 Fast Ball
-Feraligite
 Fighting Gem
 Fighting Memory
 Fighting Tera Shard
@@ -181,7 +164,6 @@ Fist Plate
 Flame Orb
 Flame Plate
 Float Stone
-Floettite
 Flying Gem
 Flying Memory
 Flying Tera Shard
@@ -190,15 +172,12 @@ Focus Band
 Focus Sash
 Fresh Water
 Friend Ball
-Froslassite
 Full Heal
 Full Incense
 Full Restore
 Galactic Key
 Galladite
 Ganlon Berry
-Garchompite
-Garchompite Z
 Gardevoirite
 Gengarite
 Genius Wing
@@ -209,12 +188,9 @@ Ghost Tera Shard
 Ghostium Z
 Gigantamix
 Glalitite
-Glimmoranite
 God Stone
 Gold Bottle
 Gold Bottle Cap
-Golisopite
-Golurkite
 Good Rod
 Grass Gem
 Grass Memory
@@ -236,14 +212,12 @@ Gyaradosite
 Haban Berry
 Hard Stone
 Hasty Mint
-Hawluchanite
 Heal Ball
 Health Candy
 Health Wing
 Heart Scale
 Hearthflame Mask
 Heat Rock
-Heatranite
 Heavy Ball
 Heavy Duty Boots
 Helix Fossil
@@ -307,7 +281,6 @@ Lonely Mint
 Lopunnite
 Love Ball
 Lucarionite
-Lucarionite Z
 Luck Incense
 Lucky Egg
 Lucky Punch
@@ -328,7 +301,6 @@ Magmarizer
 Magnet
 Mago Berry
 Magost Berry
-Malamarite
 Manectite
 Maranga Berry
 Marshadium Z
@@ -344,9 +316,7 @@ Medichamite
 Mega Bracelet
 Mega Pendant
 Mega Ring
-Meganiumite
 Mental Herb
-Meowsticite
 Metagrossite
 Metal Coat
 Metronome
@@ -429,14 +399,11 @@ Psychic Seed
 Psychic Tera Shard
 Psychium Z
 Punching Glove
-Pyroarite
 Qualot Berry
 Quick Ball
 Quick Claw
 Quiet Mint
 Rabuta Berry
-Raichunite X
-Raichunite Y
 Rainbow Wing
 Rare Candy
 Rash Mint
@@ -473,10 +440,7 @@ Salamencite
 Sassy Mint
 Sceptilite
 Scizorite
-Scolipite
 Scope Lens
-Scovillainite
-Scraftinite
 Sea Incense
 Secret Key
 Secret Potion
@@ -508,10 +472,8 @@ Splash Plate
 Spooky Plate
 Ss Ticket
 Star Piece
-Staraptite
 Stardust
 Starf Berry
-Starminite
 Steel Gem
 Steel Memory
 Steel Tera Shard
@@ -545,7 +507,6 @@ Ultranecrozium Z
 Up Grade
 Utility Umbrella
 Venusaurite
-Victreebelite
 Vs Recorder
 Vs Seeker
 Wacan Berry
@@ -567,8 +528,6 @@ Xtransceiver
 Yache Berry
 Z Ring
 Zap Plate
-Zeraorite
 Zinc
 Zoom Lens
 Zygarde Cube
-Zygardite
