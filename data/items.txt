@@ -1,309 +1,123 @@
 Ability Capsule
-Ability Patch
 Ability Shield
-Ability Urge
 Abomasite
-Abra Candy
 Absolite
-Absolite Z
 Absorb Bulb
-Academy Ball
-Academy Bottle
-Academy Cup
-Academy Tablecloth
 Acro Bike
 Adamant Crystal
 Adamant Mint
 Adamant Orb
 Adrenaline Orb
-Adventure Rules
-Aerodactyl Candy
 Aerodactylite
 Aggronite
-Aguav Berry
-Aipom Hair
 Air Balloon
-Air Mail
 Alakazite
-Alomomola Mucus
-Aloraichium
 Altarianite
-Amaze Mulch
 Ampharosite
 Amulet Coin
 Antidote
-Apicot Berry
-Apple
-Applin Juice
-Apricorn Box
-Aqua Suit
-Armor Fossil
-Armor Pass
-Armorite Ore
-Arrokuda Scales
-Articuno Candy
-Aspear Berry
+Apricot Berry
 Assault Vest
 Audinite
-Auroraticket
-Auspicious Armor
-Autograph
-Avocado
 Awakening
-Axew Scales
 Azure Flute
-Azurill Fur
 Babiri Berry
-Bachs Food Tin
-Bacon
-Bagon Scales
-Baguette
-Balm Mushroom
-Banana
-Band Autograph
 Banettite
-Barbaracite
-Barboach Slime
-Barred Cup
-Basculin Fang
 Basement Key
-Basil
-Battle Pocket
-Battle Tablecloth
-Baxcalibrite
-Beach Glass
-Bead Mail
 Beast Ball
 Beedrillite
-Bellsprout Candy
-Bellsprout Vine
-Belue Berry
-Bergmite Ice
 Berry Juice
-Berry Pots
-Berry Pouch
-Berry Sweet
 Bicycle
-Big Bamboo Shoot
-Big Malasada
 Big Mushroom
 Big Nugget
 Big Pearl
 Big Root
-Bike Green
-Bike Yellow
-Bike Voucher
-Binding Band
-Bitter Herba Mystica
-Black Apricorn
-Black Augurite
 Black Belt
-Black Flute
 Black Glasses
-Black Mane Hair
 Black Sludge
-Blank Plate
 Blastoisinite
 Blazikenite
 Blue Orb
-Bluk Berry
 Blunder Policy
-Bobs Food Tin
-Boiled Egg
 Bold Mint
-Bombirdier Feather
-Bonsly Tears
-Boost Mulch
 Booster Energy
 Bottle Cap
-Bounsweet Sweat
-Bramblin Twig
 Brave Mint
-Bread
-Brick Mail
 Bright Powder
 Brittle Bones
 Bronze Bottle
-Bronze Cup
-Bronzor Fragment
-Bruxish Tooth
-Bubble Mail
 Bug Gem
 Bug Memory
 Bug Tera Shard
-Buizel Fur
-Bulbasaur Candy
 Burn Drive
 Burn Heal
-Butter
-Bw Grass Tablecloth
-Cacnea Needle
 Calcium
 Calm Mint
 Cameruptite
-Camping Gear
-Candy Jar
-Capsakid Seed
-Carbink Jewel
 Carbos
 Card Key
 Careful Mint
-Carrot Seeds
-Casteliacone
-Catching Charm
-Catching Pocket
-Caterpie Candy
 Cell Battery
-Cetoddle Grease
-Chalky Stone
-Chandelurite
-Chansey Candy
-Charcadet Soot
 Charcoal
 Charizardite X
 Charizardite Y
-Charmander Candy
 Charti Berry
-Cheese
-Cheri Berry
 Cherish Ball
-Cherry Tomatoes
-Chesnaughtite
 Chesto Berry
-Chewtle Claw
 Chilan Berry
-Chili Sauce
 Chill Drive
-Chimechite
-Chipped Pot
 Choice Band
 Choice Scarf
 Choice Specs
 Chople Berry
-Chorizo
-Clauncher Claw
-Claw Fossil
 Cleanse Tag
 Clear Amulet
-Clear Bell
-Clefablite
-Clefairy Candy
-Cleffa Fur
-Clever Mochi
 Clever Wing
-Clothing Trunk
-Clover Sweet
 Coba Berry
-Coconut Milk
 Coin Case
 Colbur Berry
-Colress Machine
-Combee Honey
 Comet Shard
-Common Stone
-Contest Pass
 Cornerstone Mask
-Cornn Berry
-Corphish Shell
-Courage Candy
-Cover Fossil
 Covert Cloak
-Crabominite
-Crabrawler Shell
-Cracked Pot
-Cramorant Down
-Cream Cheese
-Croagunk Poison
-Crown Pass
-Cryogonal Ice
-Crystal Cluster
-Cubchoo Fur
-Cubone Candy
-Cucumber
-Cufant Tarnish
-Curry Powder
 Custap Berry
-Cutiefly Powder
-Cyber Ball
-Cyclizar Scales
-Damp Mulch
 Damp Rock
 Dark Gem
 Dark Memory
 Dark Stone
 Dark Tera Shard
 Darkinium Z
-Darkranite
 Dawn Stone
-Dedenne Fur
 Deep Sea Scale
 Deep Sea Tooth
-Deerling Hair
-Deino Scales
-Delibird Parcel
-Delphoxite
 Destiny Knot
-Devon Scuba Gear
-Diamond Bottle
-Diamond Pattern Cup
-Diamond Tablecloth
 Diancite
-Diglett Candy
-Diglett Dirt
 Dire Hit
-Discount Coupon
-Ditto Candy
-Ditto Goo
 Dive Ball
 Dna Splicers
-Doduo Candy
 Dome Fossil
-Dondozo Whisker
 Douse Drive
 Dowsing Machine
 Draco Plate
-Dragalgite
 Dragon Fang
 Dragon Gem
 Dragon Memory
 Dragon Scale
 Dragon Skull
 Dragon Tera Shard
-Dragoninite
 Dragonium Z
-Drampanite
-Dratini Candy
-Dratini Scales
 Dread Plate
 Dream Ball
-Dream Mail
-Dreepy Powder
-Drifloon Gas
-Drowzee Candy
-Drowzee Fur
 Dubious Disc
-Ducklett Feather
-Dunsparce Scales
-Durin Berry
 Dusk Ball
 Dusk Stone
-Duskull Fragment
 Dynamax Band
 Dynamax Candy
 Dynite Ore
 Earth Plate
-Eelektrossite
-Eevee Candy
-Eevee Cup
-Eevee Fur
 Eevium Z
 Egg
-Eiscue Down
 Eject Button
 Eject Pack
-Ekans Candy
-Ekans Fang
-Electabuzz Candy
 Electirizer
 Electric Gem
 Electric Memory
@@ -312,170 +126,72 @@ Electric Tera Shard
 Electrium Z
 Elevator Key
 Elixir
-Emboarite
-Endorsement
 Energy Powder
 Energy Root
 Enigma Berry
-Enigma Stone
-Enigmatic Card
-Eon Flute
-Eon Ticket
 Escape Rope
 Ether
 Everstone
 Eviolite
-Excadrite
-Exeggcute Candy
-Exercise Ball
 Exp Candy
 Exp Charm
 Exp Share
 Expert Belt
-Explorer Kit
-Fab Mail
 Fairium Z
 Fairy Feather
 Fairy Gem
 Fairy Memory
 Fairy Tera Shard
-Falinks Sweat
-Falinksite
-Fame Checker
-Fancy Apple
-Farfetchd Candy
-Fashion Case
 Fast Ball
-Favored Mail
-Feebas Scales
-Feraligite
-Festival Ticket
-Fidough Fur
 Fighting Gem
 Fighting Memory
 Fighting Tera Shard
 Fightinium Z
-Figy Berry
-Finizen Mucus
-Finneon Scales
 Fire Gem
 Fire Memory
-Fire Pattern Cup
 Fire Stone
 Fire Tera Shard
 Firium Z
-Firium Z
 Fishing Rod
-Fishing Rod  Galar
 Fist Plate
-Flabebe Pollen
-Flame Mail
 Flame Orb
 Flame Plate
-Flamigo Down
-Fletchling Feather
-Flittle Down
 Float Stone
-Floettite
-Flower Pattern Cup
-Flower Sweet
-Fluffy Tail
 Flying Gem
 Flying Memory
 Flying Tera Shard
 Flyinium Z
 Focus Band
 Focus Sash
-Fomantis Leaf
-Foongus Spores
-Forage Bag
-Fossilized Bird
-Fossilized Dino
-Fossilized Drake
-Fossilized Fish
-Fresh Cream
-Fresh Start Mochi
 Fresh Water
-Fried Fillet
-Fried Food
 Friend Ball
-Frigibax Scales
-Froslassite
-Fruit Bunch
 Full Heal
 Full Incense
 Full Restore
 Galactic Key
-Galarica Cuff
-Galarica Twig
-Galarica Wreath
 Galladite
 Ganlon Berry
-Garchompite
-Garchompite Z
 Gardevoirite
-Gastly Candy
-Gastly Gas
-Gb Sounds
 Gengarite
-Genius Mochi
 Genius Wing
 Gentle Mint
-Geodude Candy
-Geodude Fragment
 Ghost Gem
 Ghost Memory
 Ghost Tera Shard
 Ghostium Z
-Gible Scales
 Gigantamix
-Gimmighoul Coin
-Girafarig Fur
 Glalitite
-Gligar Fang
-Glimmering Charm
-Glimmet Crystal
-Glimmoranite
-Glitter Mail
-Go Goggles
 God Stone
 Gold Bottle
 Gold Bottle Cap
-Gold Cup
-Gold Leaf
-Gold Pick
-Gold Teeth
-Goldeen Candy
-Golden Nanab Berry
-Golden Pinap Berry
-Golden Razz Berry
-Golisopite
-Golurkite
 Good Rod
-Gooey Mulch
-Goomy Goo
-Gothita Eyelash
-Gracidea
 Grass Gem
-Grass Mail
 Grass Memory
 Grass Tera Shard
 Grassium Z
 Grassy Seed
 Great Ball
-Greavard Wax
-Green Apricorn
-Green Bell Pepper
-Green Dish
-Green Petal
-Green Poke Ball Pick
-Green Scarf
-Green Shard
-Greet Mail
 Greninjite
-Grepa Berry
-Grimer Candy
-Grimer Toxin
 Grip Claw
 Griseous Core
 Griseous Orb
@@ -483,903 +199,307 @@ Ground Gem
 Ground Memory
 Ground Tera Shard
 Groundium Z
-Growlithe Candy
-Growlithe Fur
-Growth Mulch
-Grubbin Thread
-Grubby Hanky
 Guard Spec
-Gulpin Mucus
 Gyaradosite
 Haban Berry
-Ham
-Hamburger
-Happiny Dust
-Harbor Mail
 Hard Stone
 Hasty Mint
-Hatenna Dust
-Hawlucha Down
-Hawluchanite
 Heal Ball
-Heal Powder
 Health Candy
-Health Mochi
 Health Wing
-Heart Mail
 Heart Scale
 Hearthflame Mask
 Heat Rock
-Heatranite
 Heavy Ball
 Heavy Duty Boots
 Helix Fossil
 Heracronite
-Heracross Claw
-Herbed Sausage
-Heroic Sword Pick
-Hondew Berry
-Honey
-Honor Of Kalos
-Hoothoot Feather
-Hopo Berry
-Hoppip Leaf
-Horsea Candy
-Horseradish
 Houndoominite
-Houndour Fang
 Hp Up
 Hyper Potion
-Iapapa Berry
 Ice Gem
 Ice Heal
 Ice Memory
 Ice Stone
 Ice Tera Shard
-Iceroot Carrot
 Icicle Plate
 Icium Z
-Icium Z
 Icy Rock
-Igglybuff Fluff
-Ilimas Normalium Z
-Illumise Fluid
-Impidimp Hair
 Impish Mint
 Incinium Z
-Indeedee Fur
-Inquiry Mail
 Insect Plate
-Instant Noodles
-Intriguing Stone
 Iron
 Iron Ball
 Iron Plate
-Item Drop
-Item Urge
-Jaboca Berry
 Jade Orb
-Jalapeno
-Jam
 Jangmo O Scales
-Jaw Fossil
-Jigglypuff Candy
 Jolly Mint
-Journal
-Jynx Candy
-Kabuto Candy
-Kangaskhan Candy
 Kangaskhanite
 Kasib Berry
 Kebia Berry
 Kee Berry
-Kelpsy Berry
-Ketchup
 Key Stone
 Kings Rock
-Kiwi
-Klawf Claw
-Klawf Stick
-Klefki Key
-Koffing Candy
-Koffing Gas
-Kofus Wallet
-Komala Claw
 Kommonium Z
-Koraidons Poke Ball
-Krabby Candy
-Kricketot Shell
-Lafeather Ball
 Lagging Tail
-Lagigaton Ball
-Great Ball
-Heavy Ball
-Jet Ball
-Leaden Ball
 Lansat Berry
-Origin Ball
 Poke Ball
-Lapras Candy
-Large Leek
-Larvesta Fuzz
-Larvitar Claw
-Strange Ball
 Latiasite
 Latiosite
-Ultra Ball
 Lava Cookie
-Lawing Ball
 Lax Incense
 Lax Mint
 Leaf Stone
-Leafy Tablecloth
-Lechonk Hair
-Left Poke Ball
 Leftovers
-Legend Plate
 Lemonade
-Lens Case
 Leppa Berry
-Letter
-Lettuce
 Level Ball
-Liberty Pass
-Lickitung Candy
 Liechi Berry
 Life Orb
 Lift Key
 Light Ball
 Light Clay
 Light Stone
-Like Mail
-Lilac Tablecloth
-Linking Cord
-Litleo Tuft
-Litwick Soot
 Loaded Dice
-Lock Capsule
-Lone Earring
 Lonely Mint
-Looker Ticket
-Loot Sack
 Lopunnite
-Lost Item
-Lotad Leaf
 Love Ball
-Love Sweet
 Lucarionite
-Lucarionite Z
 Luck Incense
 Lucky Egg
 Lucky Punch
 Lum Berry
 Luminous Moss
-Lumiose Galette
 Lunalium Z
 Lunar Wing
-Lure
 Lure Ball
 Lustrous Globe
 Lustrous Orb
-Luvdisc Scales
 Luxury Ball
 Lycanium Z
 Mach Bike
-Machine Part
 Macho Brace
-Machop Candy
 Magearnite
-Magical Heart Pick
-Magical Star Pick
-Magikarp Candy
-Magikarp Scales
-Magma Emblem
 Magma Stone
-Magma Suit
-Magmar Candy
 Magmarizer
-Magnemite Candy
-Magnemite Screw
 Magnet
-Mago Berry
-Magost Berry
-Makeup Bag
-Makuhita Sweat
-Malamarite
-Malicious Armor
 Manectite
-Mankey Candy
-Mankey Fur
 Maranga Berry
-Marble
-Mareanie Spike
-Mareep Wool
-Marill Ball
-Mark Charm
-Marmalade
 Marshadium Z
-Maschiff Fang
 Master Ball
-Masterpiece Teacup
 Mawilite
 Max Elixir
 Max Ether
-Max Honey
-Max Lure
-Max Mushrooms
 Max Potion
 Max Repel
 Max Revive
-Mayonnaise
 Meadow Plate
-Mech Mail
-Medal Box
 Medichamite
-Medicine Pocket
-Meditite Sweat
-Mega Anchor
-Mega Anklet
 Mega Bracelet
-Mega Charm
-Mega Cuff
-Mega Glasses
-Mega Glove
 Mega Pendant
 Mega Ring
-Mega Stickpin
-Mega Tiara
-Meganiumite
-Meltan Candy
-Member Card
 Mental Herb
-Meowsticite
-Meowth Candy
-Meowth Fur
 Metagrossite
-Metal Alloy
 Metal Coat
-Metal Powder
-Meteorite
-Meteorite Shard
 Metronome
-Mew Candy
 Mewnium Z
-Mewnium Z
-Mewtwo Candy
 Mewtwonite X
 Mewtwonite Y
 Micle Berry
-Mienfoo Claw
-Mighty Candy
 Mild Mint
 Mimikium Z
-Mimikyu Scrap
 Mind Plate
-Mint Tablecloth
 Miracle Seed
-Miraidons Poke Ball
 Mirror Herb
-Misdreavus Tears
 Misty Seed
-Mixed Mushrooms
 Modest Mint
-Moltres Candy
-Monstrous Tablecloth
-Moomoo Cheese
 Moomoo Milk
 Moon Ball
-Moon Flute
 Moon Stone
-Morpeko Snack
-Mosaic Mail
-Mr Mime Candy
-Mudbray Mud
-Munchlax Fang
-Murkrow Bauble
 Muscle Band
-Muscle Mochi
-Muscle Wing
-Mustard
 Mystery Egg
 Mystic Water
-Mysticticket
 N Lunarizer
-Nacli Salt
 Naive Mint
-Nanab Berry
 Naughty Mint
 Nest Ball
 Net Ball
 Never Melt Ice
-Nidoran F Candy
-Nidoran M Candy
-Noibat Fur
-Nomel Berry
-Noodles
 Normal Gem
 Normal Tera Shard
 Normalium Z
-Nosepass Fragment
 Nugget
-Numel Lava
-Nymble Claw
-Oaks Letter
 Oaks Parcel
 Occa Berry
 Odd Incense
 Odd Keystone
-Oddish Candy
-Old Amber
-Old Charm
 Old Gateau
-Old Letter
 Old Rod
-Old Sea Map
-Olive Oil
-Omanyte Candy
-Onion
-Onix Candy
 Oran Berry
-Orange Dish
-Orange Mail
-Orange Petal
-Oranguru Fur
-Oricorio Feather
-Orthworm Tarnish
-Oval Charm
 Oval Stone
-Pachirisu Fur
-Pack Of Potatoes
-Packaged Curry
-Pair Of Tickets
-Pal Pad
-Pamtre Berry
 Paralyze Heal
-Paras Candy
-Parasol Pick
-Parcel
-Parcel Letsgo
 Park Ball
-Party Sparkler Pick
-Pass
-Pass Orb
 Passho Berry
-Passimian Fur
-Pasta
-Pawmi Fur
-Pawniard Blade
 Payapa Berry
-Peach Tablecloth
-Peanut Butter
 Pearl
-Pearl String
-Peat Block
-Pecha Berry
-Pepper
-Permit
 Persim Berry
 Petaya Berry
-Petilil Leaf
-Pewter Crunchies
-Phanpy Nail
-Phantump Twig
-Photo Album
-Pichu Fur
-Pickle
-Picnic Set
 Pidgeotite
-Pidgey Candy
-Pika Pika Pick
-Pikachu Candy
-Pikachu Cup
 Pikanium Z
-Pinap Berry
-Pincurchin Spines
-Pineapple
-Pineco Husk
-Pink Apricorn
-Pink Bottle
-Pink Cup
-Pink Nectar
-Pink Petal
-Pink Scarf
-Pink Tablecloth
-Pinsir Candy
 Pinsirite
 Pixie Plate
-Plasma Card
-Plume Fossil
-Poffin Case
-Point Card
 Poison Barb
 Poison Gem
 Poison Memory
 Poison Tera Shard
 Poisonium Z
-Poke Ball
 Poke Doll
 Poke Flute
 Poke Radar
-Poke Toy
-Pokeblock Case
-Pokeblock Kit
-Pokemon Box
-Pokemon Box Link
-Polished Mud Ball
-Poliwag Candy
-Poliwag Slime
-Polka Dot Bottle
-Polka Dot Cup
-Polka Dot Tablecloth
-Poltchageist Powder
-Pomeg Berry
-Ponyta Candy
-Poochyena Fang
-Porygon Candy
-Potato Salad
-Potato Tortilla
 Potion
-Powder Jar
 Power Anklet
 Power Band
 Power Belt
 Power Bracer
 Power Herb
 Power Lens
-Power Plant Pass
-Power Up Pocket
 Power Weight
 Pp Max
 Pp Up
-Precooked Burger
 Premier Ball
 Pretty Wing
 Primarium Z
 Prism Scale
 Prison Bottle
-Professors Mask
-Profs Letter
-Prop Case
-Prosciutto
 Protective Pads
-Protector
 Protein
 Psychic Gem
 Psychic Memory
 Psychic Seed
 Psychic Tera Shard
 Psychium Z
-Psyduck Candy
-Psyduck Down
 Punching Glove
-Pungent Root
-Pure Incense
-Purple Nectar
-Purple Petal
-Pyroarite
-Qualot Berry
 Quick Ball
-Quick Candy
 Quick Claw
-Quick Powder
 Quiet Mint
-Qwilfish Spines
-Rabuta Berry
-Radiant Petal
-Rage Candy Bar
-Raichunite X
-Raichunite Y
-Rainbow Flower
-Rainbow Pass
 Rainbow Wing
-Ralts Dust
-Rare Bone
 Rare Candy
 Rash Mint
-Rattata Candy
-Rawst Berry
 Razor Claw
 Razor Fang
-Razz Berry
-Reaper Cloth
-Red Apricorn
-Red Bell Pepper
-Red Card
-Red Chain
-Red Dish
-Red Flag Pick
-Red Flute
-Red Nectar
-Red Onion
 Red Orb
-Red Petal
-Red Scale
-Red Scarf
-Red Shard
-Reins Of Unity
 Relaxed Mint
-Relic Band
-Relic Copper
-Relic Crown
-Relic Gold
-Relic Silver
-Relic Statue
-Relic Vase
-Rellor Mud
 Repeat Ball
 Repel
-Reply Mail
-Reset Urge
-Resist Mochi
 Resist Wing
-Retro Mail
-Reveal Glass
 Revival Herb
 Revive
-Rhyhorn Candy
-Ribbon Sweet
-Rice
-Rich Mulch
-Ride Pager
 Rindo Berry
 Ring Target
-Riolu Fur
 Rock Gem
 Rock Incense
 Rock Memory
 Rock Tera Shard
 Rockium Z
-Rockruff Rock
 Rocky Helmet
-Roller Skates
-Rolycoly Coal
-Rookidee Feather
-Room Service
-Root Fossil
 Rose Incense
 Roseli Berry
-Roto Bargain
-Roto Boost
-Roto Catch
-Roto Encounter
-Roto Exp Points
-Roto Friendship
-Roto Hatch
-Roto Hp Restore
-Roto Pp Restore
-Roto Prize Money
-Roto Stealth
-Roto Stick
-Rotom Bike
-Rotom Catalog
-Rotom Phone
-Rotom Sparks
-Rowap Berry
-Rsvp Mail
-Ruby
-Rufflet Feather
-Rule Book
 Rusted Shield
 Rusted Sword
 Sablenite
-Sableye Gem
-Sachet
 Sacred Ash
 Safari Ball
 Safety Goggles
-Sail Fossil
 Salac Berry
-Salad Mix
 Salamencite
-Salandit Gas
-Salt
-Salty Herba Mystica
-Sandile Claw
-Sandshrew Candy
-Sandshrew Claw
-Sandwich
-Sandygast Sand
-Sapphire
 Sassy Mint
-Sausages
-Scanner
-Scarlet Book
-Scatterbug Powder
 Sceptilite
 Scizorite
-Scolipite
 Scope Lens
-Scovillainite
-Scraftinite
-Scroll Of Darkness
-Scroll Of Waters
-Scyther Candy
-Scyther Claw
 Sea Incense
-Seal Bag
-Seal Case
 Secret Key
 Secret Potion
-Seedot Stem
-Seel Candy
-Sentret Fur
 Serious Mint
-Seviper Fang
-Sewaddle Leaf
-Shaderoot Carrot
-Shadow Mail
-Shalour Sable
 Sharp Beak
 Sharpedonite
 Shed Shell
 Shell Bell
-Shellder Candy
-Shellder Pearl
-Shellos Mucus
-Shinx Fang
 Shiny Charm
 Shiny Stone
-Shoal Salt
-Shoal Shell
 Shock Drive
-Shroodle Ink
-Shroomish Spores
 Shuca Berry
-Shuppet Scrap
-Silicobra Sand
 Silk Scarf
 Silph Scope
-Silver Bottle
-Silver Cup
-Silver Leaf
-Silver Nanab Berry
-Silver Pick
-Silver Pinap Berry
-Silver Powder
-Silver Razz Berry
 Silver Wing
-Sinistea Chip
 Sitrus Berry
-Skarmorite
-Skiddo Leaf
-Skrelp Kelp
-Skull Fossil
-Skwovet Fur
 Sky Plate
-Slakoth Fur
 Slowbronite
-Slowpoke Candy
-Slowpoke Claw
-Slowpoke Cup
 Slowpoke Tail
-Slugma Lava
-Small Bouquet
-Smart Candy
-Smiling Vee Pick
 Smoke Ball
-Smoke Poke Tail
-Smoked Fillet
-Smoliv Oil
 Smooth Rock
-Sneasel Claw
-Snom Thread
-Snorlax Candy
-Snorlium Z
-Snorunt Fur
-Snover Berries
-Snow Mail
 Snowball
-Soda Pop
 Soft Sand
 Solganium Z
-Sonias Book
-Soot Sack
 Soothe Bell
 Soul Dew
-Sour Herba Mystica
-Space Mail
-Sparkling Stone
-Spearow Candy
 Spell Tag
-Spelon Berry
-Spice Mix
-Spicy Herba Mystica
-Spinarak Thread
-Spiritomb Fragment
 Splash Plate
-Spoink Pearl
 Spooky Plate
-Spooky Tablecloth
-Sport Ball
-Sprayduck
-Sprinklotad
-Squawkabilly Feather
-Squirt Bottle
-Squirtle Candy
 Ss Ticket
-Stable Mulch
-Stantler Hair
 Star Piece
-Star Sweet
-Staraptite
 Stardust
 Starf Berry
-Starly Feather
-Starminite
-Staryu Candy
-Steel Bottle B
-Steel Bottle R
-Steel Bottle Y
 Steel Gem
-Steel Mail
 Steel Memory
 Steel Tera Shard
 Steelium Z
 Steelixite
-Stick
 Sticky Barb
 Stone Plate
-Stonjourner Stone
-Storage Key
-Strange Ball
-Strange Souvenir
-Strawberry
-Strawberry Sweet
-Stretchy Spring
-Striped Bottle
-Striped Cup
-Striped Tablecloth
-Stunky Fur
-Style Card
 Suite Key
-Sun Flute
 Sun Stone
-Sunkern Leaf
-Sunrise Flower Pick
-Sunset Flower Pick
-Super Lure
 Super Potion
 Super Repel
 Super Rod
-Surge Badge
-Surprise Mulch
-Surskit Syrup
-Swablu Fluff
 Swampertite
-Sweet Apple
-Sweet Heart
-Sweet Herba Mystica
-Swift Mochi
 Swift Wing
-Swinub Hair
-Syrupy Apple
-Tadbulb Mucus
-Tamato Berry
-Tandemaus Fur
 Tanga Berry
-Tangela Candy
 Tapunium Z
-Tarountula Thread
-Tart Apple
-Tatsugiri Scales
-Tatsugirinite
-Tauros Candy
-Tauros Hair
-Tea
-Teachy Tv
-Teal Mask
-Teal Style Card
-Teddiursa Claw
-Tentacool Candy
 Tera Orb
 Terrain Extender
-Thanks Mail
 Thick Club
 Throat Spray
 Thunder Stone
-Tidal Bell
-Timburr Sweat
 Timer Ball
 Timid Mint
-Tin Of Beans
-Tinkatink Hair
-Tiny Bamboo Shoot
-Tiny Mushroom
-Tm Case
-Tmv Pass
-Toedscool Flaps
-Tofu
-Tomato
-Torkoal Coal
-Tough Candy
 Town Map
-Toxel Sparks
 Toxic Orb
 Toxic Plate
-Travel Trunk
-Tri Pass
-Tropic Mail
-Tropical Shell
-Tropius Leaf
-Tunnel Mail
 Twisted Spoon
-Tynamo Slime
 Tyranitarite
 Ultra Ball
 Ultranecrozium Z
-Unown Report
-Unremarkable Teacup
 Up Grade
 Utility Umbrella
-Varoom Fume
-Vee Vee Pick
-Veluza Fillet
-Venonat Candy
-Venonat Fang
 Venusaurite
-Victreebelite
-Vinegar
-Violet Book
-Volbeat Fluid
-Voltorb Candy
-Voltorb Sparks
 Vs Recorder
 Vs Seeker
-Vullaby Feather
-Vulpix Candy
-Vulpix Fur
 Wacan Berry
-Wailmer Pail
-Wasabi
 Water Gem
 Water Memory
 Water Stone
 Water Tera Shard
-Watercress
 Waterium Z
-Watmel Berry
-Wattrel Feather
 Wave Incense
-Wave Mail
 Weakness Policy
-Weedle Candy
 Wellspring Mask
-Wepear Berry
-Whimsical Tablecloth
-Whipped Cream
-Whipped Dream
-White Apricorn
-White Dish
-White Flute
 White Herb
-White Mane Hair
 Wide Lens
-Wiglett Sand
-Wiki Berry
-Wingull Feather
-Winking Pika Pick
 Wise Glasses
-Wishing Chip
-Wishing Piece
-Wishing Star
-Wood Mail
-Wooden Crown
-Wooper Slime
 Xtransceiver
 Yache Berry
-Yanma Spike
-Yarn Ball
-Yogurt
-Yungoos Fur
-Z Power Ring
 Z Ring
-Zangoose Claw
 Zap Plate
-Zapdos Candy
-Zeraorite
 Zinc
 Zoom Lens
-Zorua Fur
-Zubat Candy
 Zygarde Cube
-Zygardite
