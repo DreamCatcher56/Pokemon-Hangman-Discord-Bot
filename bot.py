@@ -282,6 +282,11 @@ class HangmanGame:
         self._timeout_task: asyncio.Task | None = None
         self.round_start_time: float | None = None
         self.guess_durations: list[float] = []
+        # Discord dispatches each incoming message as its own concurrent task,
+        # so two rapid-fire guesses can both be "in flight" at once. This lock
+        # forces guess processing (and round-timeout processing) to run one
+        # at a time so a word/round can never be completed twice.
+        self._lock = asyncio.Lock()
 
     def player_by_id(self, uid: int) -> discord.Member | None:
         return discord.utils.get(self.players, id=uid)
@@ -320,12 +325,13 @@ class HangmanGame:
             await asyncio.sleep(ROUND_TIMEOUT_SECONDS)
         except asyncio.CancelledError:
             return
-        if not self.active:
-            return
-        await self.channel.send(
-            f"⏰ Time's up! The answer was **{self.current_word}**. No points awarded this round."
-        )
-        await self._advance()
+        async with self._lock:
+            if not self.active:
+                return
+            await self.channel.send(
+                f"⏰ Time's up! The answer was **{self.current_word}**. No points awarded this round."
+            )
+            await self._advance()
 
     async def handle_guess(self, message: discord.Message):
         if not self.active:
@@ -337,10 +343,13 @@ class HangmanGame:
         if not content or not content.replace(" ", "").isalpha():
             return
 
-        if len(content) == 1:
-            await self._handle_letter_guess(message.author, content.upper())
-        else:
-            await self._handle_word_guess(message.author, content)
+        async with self._lock:
+            if not self.active:
+                return
+            if len(content) == 1:
+                await self._handle_letter_guess(message.author, content.upper())
+            else:
+                await self._handle_word_guess(message.author, content)
 
     async def _handle_letter_guess(self, author: discord.Member, letter: str):
         if letter in VOWELS:
@@ -377,7 +386,10 @@ class HangmanGame:
         await self._advance()
 
     async def _advance(self):
-        if self._timeout_task:
+        # _advance() can run *inside* self._timeout_task (a natural round
+        # timeout calls this directly) - cancelling it here would throw
+        # CancelledError into this very coroutine at the next await below.
+        if self._timeout_task and self._timeout_task is not asyncio.current_task():
             self._timeout_task.cancel()
         if self.round_num >= self.rounds_per_game:
             await self.end_game()
@@ -438,6 +450,7 @@ class BlitzTimeGame:
         self.correct_count = 0
         self.active = True
         self._timeout_task: asyncio.Task | None = None
+        self._lock = asyncio.Lock()
 
     async def start(self):
         self._timeout_task = asyncio.create_task(self._run_timer())
@@ -448,9 +461,10 @@ class BlitzTimeGame:
             await asyncio.sleep(BLITZ1_TIME_LIMIT_SECONDS)
         except asyncio.CancelledError:
             return
-        if not self.active:
-            return
-        await self.end_game()
+        async with self._lock:
+            if not self.active:
+                return
+            await self.end_game()
 
     async def _next_word(self):
         self.current_category, self.current_word = pick_word(self.word_lists)
@@ -474,10 +488,13 @@ class BlitzTimeGame:
         if not content or not content.replace(" ", "").isalpha():
             return
 
-        if len(content) == 1:
-            await self._handle_letter_guess(content.upper())
-        else:
-            await self._handle_word_guess(content)
+        async with self._lock:
+            if not self.active:
+                return
+            if len(content) == 1:
+                await self._handle_letter_guess(content.upper())
+            else:
+                await self._handle_word_guess(content)
 
     async def _handle_letter_guess(self, letter: str):
         if letter in VOWELS:
@@ -559,6 +576,7 @@ class BlitzSpeedGame:
         self.correct_count = 0
         self.active = True
         self.start_time: float | None = None
+        self._lock = asyncio.Lock()
 
     async def start(self):
         self.start_time = time.perf_counter()
@@ -586,10 +604,13 @@ class BlitzSpeedGame:
         if not content or not content.replace(" ", "").isalpha():
             return
 
-        if len(content) == 1:
-            await self._handle_letter_guess(content.upper())
-        else:
-            await self._handle_word_guess(content)
+        async with self._lock:
+            if not self.active:
+                return
+            if len(content) == 1:
+                await self._handle_letter_guess(content.upper())
+            else:
+                await self._handle_word_guess(content)
 
     async def _handle_letter_guess(self, letter: str):
         if letter in VOWELS:
