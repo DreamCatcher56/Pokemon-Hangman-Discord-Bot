@@ -183,7 +183,7 @@ def _init_db_sync():
             """
             CREATE TABLE IF NOT EXISTS blitz_scores (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                mode TEXT NOT NULL CHECK(mode IN ('blitz1', 'blitz2')),
+                mode TEXT NOT NULL,
                 user_id INTEGER NOT NULL,
                 username TEXT NOT NULL,
                 score REAL NOT NULL,
@@ -191,6 +191,35 @@ def _init_db_sync():
             )
             """
         )
+
+        # Older deployments created this table with a
+        # CHECK(mode IN ('blitz1', 'blitz2')) constraint. SQLite can't drop
+        # a CHECK constraint with ALTER TABLE, so detect it and rebuild the
+        # table (preserving all existing rows) whenever new modes - like
+        # blitz2p - need to be inserted.
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'blitz_scores'"
+        ).fetchone()
+        if row and row[0] and "CHECK" in row[0].upper():
+            conn.execute("ALTER TABLE blitz_scores RENAME TO blitz_scores_old")
+            conn.execute(
+                """
+                CREATE TABLE blitz_scores (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mode TEXT NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    username TEXT NOT NULL,
+                    score REAL NOT NULL,
+                    achieved_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO blitz_scores (id, mode, user_id, username, score, achieved_at) "
+                "SELECT id, mode, user_id, username, score, achieved_at FROM blitz_scores_old"
+            )
+            conn.execute("DROP TABLE blitz_scores_old")
+
         conn.execute("CREATE INDEX IF NOT EXISTS idx_blitz_mode_score ON blitz_scores(mode, score)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_blitz_mode_user ON blitz_scores(mode, user_id)")
         conn.commit()
@@ -603,13 +632,21 @@ class BlitzTimeGame:
 
 
 class BlitzSpeedGame:
-    """!blitz2 - guess a fixed number of words as fast as possible, timed to the millisecond."""
+    """!blitz2 / !b2p - guess a fixed number of words as fast as possible, timed to the millisecond."""
 
-    def __init__(self, channel: discord.TextChannel, player: discord.Member, word_lists, words_to_guess: int = BLITZ2_WORDS_TO_GUESS):
+    def __init__(
+        self,
+        channel: discord.TextChannel,
+        player: discord.Member,
+        word_lists,
+        words_to_guess: int = BLITZ2_WORDS_TO_GUESS,
+        mode: str = "blitz2",
+    ):
         self.channel = channel
         self.player = player
         self.word_lists = word_lists
         self.words_to_guess = words_to_guess
+        self.mode = mode  # "blitz2" or "blitz2p" - which leaderboard this run scores to
         self.current_word = ""
         self.current_category = ""
         self.guessed_letters: set[str] = set()
@@ -698,8 +735,9 @@ class BlitzSpeedGame:
         elapsed = time.perf_counter() - self.start_time
 
         personal_rank, global_rank = await record_score(
-            "blitz2", self.player.id, self.player.display_name, elapsed
+            self.mode, self.player.id, self.player.display_name, elapsed
         )
+        board_command = "!blitzboard2p" if self.mode == "blitz2p" else "!blitzboard2"
 
         embed = discord.Embed(
             title="🏁 Speed Blitz Complete!",
@@ -714,7 +752,7 @@ class BlitzSpeedGame:
         if personal_rank <= PERSONAL_BEST_COUNT:
             notes.append(f"🌟 New personal best \u2014 #{personal_rank} in your top {PERSONAL_BEST_COUNT}! (`!pb` to view)")
         if global_rank <= LEADERBOARD_SIZE:
-            notes.append(f"🌍 That lands at #{global_rank} on the all-time leaderboard! (`!blitzboard2` to view)")
+            notes.append(f"🌍 That lands at #{global_rank} on the all-time leaderboard! (`{board_command}` to view)")
         if notes:
             embed.add_field(name="\u200b", value="\n".join(notes), inline=False)
         for name, value in build_time_interval_fields(self.word_times):
@@ -840,19 +878,45 @@ async def blitz2_start(ctx: commands.Context):
     await game.start()
 
 
+@bot.command(name="b2p")
+async def blitz2_phone_start(ctx: commands.Context):
+    if ctx.channel.id in active_games or ctx.channel.id in active_blitz_games:
+        await ctx.send("A game is already running in this channel! Finish it before starting a new one.")
+        return
+
+    try:
+        word_lists = load_word_lists(BLITZ_DATA_FILES)
+    except (FileNotFoundError, ValueError) as e:
+        await ctx.send(f"⚠️ Can't start a game: {e}")
+        return
+
+    game = BlitzSpeedGame(ctx.channel, ctx.author, word_lists, mode="blitz2p")
+    active_blitz_games[ctx.channel.id] = game
+    await ctx.send(
+        f"⚡ **{ctx.author.display_name}** started a Speed Blitz (Phone)! Guess {BLITZ2_WORDS_TO_GUESS} words as "
+        f"fast as you can \u2014 the clock is running down to the millisecond. Scores here go to the phone "
+        f"leaderboard. Go!"
+    )
+    await game.start()
+
+
 @bot.command(name="pb")
 async def personal_bests(ctx: commands.Context):
     blitz1_rows = await get_personal_bests("blitz1", ctx.author.id)
     blitz2_rows = await get_personal_bests("blitz2", ctx.author.id)
+    blitz2p_rows = await get_personal_bests("blitz2p", ctx.author.id)
+
+    command_for_mode = {"blitz1": "blitz1", "blitz2": "blitz2", "blitz2p": "b2p"}
 
     def render(mode, rows):
         if not rows:
-            return f"No scores yet \u2014 try `!{mode}`!"
+            return f"No scores yet \u2014 try `!{command_for_mode[mode]}`!"
         return "\n".join(f"**{i}.** {format_score(mode, score)}" for i, (score, _) in enumerate(rows, start=1))
 
     embed = discord.Embed(title=f"🏅 {ctx.author.display_name}'s Personal Bests", color=discord.Color.purple())
     embed.add_field(name="⚡ Blitz1 \u2014 Most Words in 100s", value=render("blitz1", blitz1_rows), inline=False)
     embed.add_field(name="🏁 Blitz2 \u2014 Fastest 5 Words", value=render("blitz2", blitz2_rows), inline=False)
+    embed.add_field(name="📱 Blitz2 (Phone) \u2014 Fastest 5 Words", value=render("blitz2p", blitz2p_rows), inline=False)
     await ctx.send(embed=embed)
 
 
@@ -880,6 +944,21 @@ async def blitzboard2(ctx: commands.Context):
     lines = [f"**{i}.** {username} \u2014 {format_score('blitz2', score)}" for i, (username, score, _) in enumerate(rows, start=1)]
     embed = discord.Embed(
         title="🌍 Blitz2 All-Time Leaderboard",
+        description="\n".join(lines),
+        color=discord.Color.blue(),
+    )
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="blitzboard2p")
+async def blitzboard2p(ctx: commands.Context):
+    rows = await get_leaderboard("blitz2p")
+    if not rows:
+        await ctx.send("No Blitz2 (Phone) scores yet \u2014 be the first with `!b2p`!")
+        return
+    lines = [f"**{i}.** {username} \u2014 {format_score('blitz2p', score)}" for i, (username, score, _) in enumerate(rows, start=1)]
+    embed = discord.Embed(
+        title="🌍 Blitz2 (Phone) All-Time Leaderboard",
         description="\n".join(lines),
         color=discord.Color.blue(),
     )
