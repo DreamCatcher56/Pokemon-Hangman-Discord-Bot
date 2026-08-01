@@ -116,11 +116,14 @@ def format_wrong_letters(wrong_letters: set[str]) -> str:
     return "Letters not in the word: " + ", ".join(sorted(wrong_letters))
 
 
-def build_time_interval_fields(word_times: list[tuple[str, float]], max_chars: int = 1000) -> list[tuple[str, str]]:
-    """Turns a list of (word, seconds) into (field_name, field_value) pairs,
-    splitting into multiple fields if needed to stay under Discord's
-    1024-char embed field limit."""
-    lines = [f"Word {i}: **{word}** \u2014 {seconds:.3f}s" for i, (word, seconds) in enumerate(word_times, start=1)]
+def build_time_interval_fields(word_times: list[tuple[str, float, float]], max_chars: int = 1000) -> list[tuple[str, str]]:
+    """Turns a list of (word, duration_seconds, cumulative_seconds) into
+    (field_name, field_value) pairs, splitting into multiple fields if
+    needed to stay under Discord's 1024-char embed field limit."""
+    lines = [
+        f"Word {i}: **{word}** \u2014 {duration:.3f}s (total: {cumulative:.3f}s)"
+        for i, (word, duration, cumulative) in enumerate(word_times, start=1)
+    ]
 
     chunks: list[str] = []
     current: list[str] = []
@@ -477,10 +480,12 @@ class BlitzTimeGame:
         self.active = True
         self._timeout_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
+        self.game_start_time: float | None = None
         self.word_start_time: float | None = None
-        self.word_times: list[tuple[str, float]] = []
+        self.word_times: list[tuple[str, float, float]] = []
 
     async def start(self):
+        self.game_start_time = time.perf_counter()
         self._timeout_task = asyncio.create_task(self._run_timer())
         await self._next_word()
 
@@ -550,8 +555,10 @@ class BlitzTimeGame:
 
     async def _word_complete(self):
         if self.word_start_time is not None:
-            elapsed = time.perf_counter() - self.word_start_time
-            self.word_times.append((self.current_word, elapsed))
+            now = time.perf_counter()
+            elapsed = now - self.word_start_time
+            cumulative = now - self.game_start_time
+            self.word_times.append((self.current_word, elapsed, cumulative))
         self.correct_count += 1
         await self.channel.send(f"🎉 **{self.current_word}**! That's {self.correct_count} so far.")
         if self.active:
@@ -612,7 +619,7 @@ class BlitzSpeedGame:
         self.start_time: float | None = None
         self._lock = asyncio.Lock()
         self.word_start_time: float | None = None
-        self.word_times: list[tuple[str, float]] = []
+        self.word_times: list[tuple[str, float, float]] = []
 
     async def start(self):
         self.start_time = time.perf_counter()
@@ -674,8 +681,10 @@ class BlitzSpeedGame:
 
     async def _word_complete(self):
         if self.word_start_time is not None:
-            elapsed_word = time.perf_counter() - self.word_start_time
-            self.word_times.append((self.current_word, elapsed_word))
+            now = time.perf_counter()
+            elapsed_word = now - self.word_start_time
+            cumulative = now - self.start_time
+            self.word_times.append((self.current_word, elapsed_word, cumulative))
         self.correct_count += 1
         if self.correct_count >= self.words_to_guess:
             await self.end_game()
