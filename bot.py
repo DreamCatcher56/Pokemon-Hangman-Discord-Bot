@@ -116,6 +116,32 @@ def format_wrong_letters(wrong_letters: set[str]) -> str:
     return "Letters not in the word: " + ", ".join(sorted(wrong_letters))
 
 
+def build_time_interval_fields(word_times: list[tuple[str, float]], max_chars: int = 1000) -> list[tuple[str, str]]:
+    """Turns a list of (word, seconds) into (field_name, field_value) pairs,
+    splitting into multiple fields if needed to stay under Discord's
+    1024-char embed field limit."""
+    lines = [f"Word {i}: **{word}** \u2014 {seconds:.3f}s" for i, (word, seconds) in enumerate(word_times, start=1)]
+
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in lines:
+        added_len = len(line) + 1  # + newline
+        if current and current_len + added_len > max_chars:
+            chunks.append("\n".join(current))
+            current, current_len = [], 0
+        current.append(line)
+        current_len += added_len
+    if current:
+        chunks.append("\n".join(current))
+
+    fields = []
+    for i, chunk in enumerate(chunks):
+        name = "Time Intervals" if i == 0 else "Time Intervals (cont.)"
+        fields.append((name, chunk))
+    return fields
+
+
 # ---------------------------------------------------------------------------
 # Persistent leaderboard storage (SQLite)
 #
@@ -451,6 +477,8 @@ class BlitzTimeGame:
         self.active = True
         self._timeout_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
+        self.word_start_time: float | None = None
+        self.word_times: list[tuple[str, float]] = []
 
     async def start(self):
         self._timeout_task = asyncio.create_task(self._run_timer())
@@ -470,6 +498,7 @@ class BlitzTimeGame:
         self.current_category, self.current_word = pick_word(self.word_lists)
         self.guessed_letters = set(VOWELS)
         self.wrong_letters = set()
+        self.word_start_time = time.perf_counter()
 
         embed = discord.Embed(
             title=f"⚡ Blitz! ({self.correct_count} guessed so far)",
@@ -520,6 +549,9 @@ class BlitzTimeGame:
             await self.channel.send(f"❌ Not quite, {self.player.display_name}.")
 
     async def _word_complete(self):
+        if self.word_start_time is not None:
+            elapsed = time.perf_counter() - self.word_start_time
+            self.word_times.append((self.current_word, elapsed))
         self.correct_count += 1
         await self.channel.send(f"🎉 **{self.current_word}**! That's {self.correct_count} so far.")
         if self.active:
@@ -551,6 +583,8 @@ class BlitzTimeGame:
             notes.append(f"🌍 That lands at #{global_rank} on the all-time leaderboard! (`!blitzboard1` to view)")
         if notes:
             embed.add_field(name="\u200b", value="\n".join(notes), inline=False)
+        for name, value in build_time_interval_fields(self.word_times):
+            embed.add_field(name=name, value=value, inline=False)
         await self.channel.send(embed=embed)
 
     async def cancel(self, cancelled_by: discord.Member):
@@ -577,6 +611,8 @@ class BlitzSpeedGame:
         self.active = True
         self.start_time: float | None = None
         self._lock = asyncio.Lock()
+        self.word_start_time: float | None = None
+        self.word_times: list[tuple[str, float]] = []
 
     async def start(self):
         self.start_time = time.perf_counter()
@@ -586,6 +622,7 @@ class BlitzSpeedGame:
         self.current_category, self.current_word = pick_word(self.word_lists)
         self.guessed_letters = set(VOWELS)
         self.wrong_letters = set()
+        self.word_start_time = time.perf_counter()
 
         embed = discord.Embed(
             title=f"⚡ Speed Blitz! Word {self.correct_count + 1} of {self.words_to_guess}",
@@ -636,6 +673,9 @@ class BlitzSpeedGame:
             await self.channel.send(f"❌ Not quite, {self.player.display_name}.")
 
     async def _word_complete(self):
+        if self.word_start_time is not None:
+            elapsed_word = time.perf_counter() - self.word_start_time
+            self.word_times.append((self.current_word, elapsed_word))
         self.correct_count += 1
         if self.correct_count >= self.words_to_guess:
             await self.end_game()
@@ -668,6 +708,8 @@ class BlitzSpeedGame:
             notes.append(f"🌍 That lands at #{global_rank} on the all-time leaderboard! (`!blitzboard2` to view)")
         if notes:
             embed.add_field(name="\u200b", value="\n".join(notes), inline=False)
+        for name, value in build_time_interval_fields(self.word_times):
+            embed.add_field(name=name, value=value, inline=False)
         await self.channel.send(embed=embed)
 
     async def cancel(self, cancelled_by: discord.Member):
