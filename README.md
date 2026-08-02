@@ -1,1 +1,1 @@
-Pokemon Hangman Bot!
+Pokemon Hangman Bot
