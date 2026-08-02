@@ -67,6 +67,25 @@ active_games: dict[int, "HangmanGame"] = {}
 active_blitz_games: dict[int, "BlitzTimeGame | BlitzSpeedGame"] = {}
 
 
+def fire_and_forget(coro) -> asyncio.Task:
+    """Schedules a coroutine (typically a channel.send()) without awaiting
+    it. Used for guess-feedback messages so a slow Discord API round-trip
+    (or rate-limit backoff) doesn't hold up the per-game lock and delay
+    processing the next guess. Errors are logged instead of vanishing
+    silently as an "exception never retrieved" warning."""
+    task = asyncio.create_task(coro)
+
+    def _log_if_failed(t: asyncio.Task):
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc is not None:
+            print(f"⚠️ Background message send failed: {exc!r}")
+
+    task.add_done_callback(_log_if_failed)
+    return task
+
+
 # ---------------------------------------------------------------------------
 # Word list loading
 # ---------------------------------------------------------------------------
@@ -372,7 +391,7 @@ class HangmanGame:
         )
         embed.add_field(name="\u200b", value=self.wrong_letters_display(), inline=False)
         embed.set_footer(text=f"Vowels are pre-filled. {ROUND_TIMEOUT_SECONDS}s to guess. Type a letter or the full answer.")
-        await self.channel.send(embed=embed)
+        fire_and_forget(self.channel.send(embed=embed))
 
         if self._timeout_task:
             self._timeout_task.cancel()
@@ -386,9 +405,9 @@ class HangmanGame:
         async with self._lock:
             if not self.active:
                 return
-            await self.channel.send(
+            fire_and_forget(self.channel.send(
                 f"⏰ Time's up! The answer was **{self.current_word}**. No points awarded this round."
-            )
+            ))
             await self._advance()
 
     async def handle_guess(self, message: discord.Message):
@@ -411,36 +430,36 @@ class HangmanGame:
 
     async def _handle_letter_guess(self, author: discord.Member, letter: str):
         if letter in VOWELS:
-            await self.channel.send(f"Vowels are already revealed \u2014 `{self.build_display()}`")
+            fire_and_forget(self.channel.send(f"Vowels are already revealed \u2014 `{self.build_display()}`"))
             return
         if letter in self.guessed_letters:
             return  # silently ignore repeat guesses to avoid spamming the channel
         self.guessed_letters.add(letter)
 
         if letter in self.current_word.upper():
-            await self.channel.send(f"✅ `{letter}` is in it! `{self.build_display()}`")
+            fire_and_forget(self.channel.send(f"✅ `{letter}` is in it! `{self.build_display()}`"))
             if self.is_fully_revealed():
                 await self._award_point(author, completed_via_letter=True)
         else:
             self.wrong_letters.add(letter)
-            await self.channel.send(f"❌ `{letter}` is not in the word.\n{self.wrong_letters_display()}")
+            fire_and_forget(self.channel.send(f"❌ `{letter}` is not in the word.\n{self.wrong_letters_display()}"))
 
     async def _handle_word_guess(self, author: discord.Member, guess: str):
         if guess.upper() == self.current_word.upper():
             self.guessed_letters = {ch.upper() for ch in self.current_word if ch.isalpha()}
             await self._award_point(author, completed_via_letter=False)
         else:
-            await self.channel.send(f"❌ Not quite, {author.display_name}.")
+            fire_and_forget(self.channel.send(f"❌ Not quite, {author.display_name}."))
 
     async def _award_point(self, author: discord.Member, completed_via_letter: bool):
         if self.round_start_time is not None:
             self.guess_durations.append(time.monotonic() - self.round_start_time)
         self.scores[author.id] += 1
         verb = "completed the word with the final letter" if completed_via_letter else "guessed the full answer"
-        await self.channel.send(
+        fire_and_forget(self.channel.send(
             f"🎉 **{author.display_name}** {verb}: **{self.current_word}**! Point awarded. "
             f"Score: {self.scores[author.id]}"
-        )
+        ))
         await self._advance()
 
     async def _advance(self):
@@ -541,7 +560,7 @@ class BlitzTimeGame:
         )
         embed.add_field(name="\u200b", value=format_wrong_letters(self.wrong_letters), inline=False)
         embed.set_footer(text=f"Vowels are pre-filled. You have {BLITZ1_TIME_LIMIT_SECONDS}s total. Type a letter or the full answer.")
-        await self.channel.send(embed=embed)
+        fire_and_forget(self.channel.send(embed=embed))
 
     async def handle_guess(self, message: discord.Message):
         if not self.active or message.author.id != self.player.id:
@@ -561,26 +580,26 @@ class BlitzTimeGame:
 
     async def _handle_letter_guess(self, letter: str):
         if letter in VOWELS:
-            await self.channel.send(f"Vowels are already revealed \u2014 `{render_word(self.current_word, self.guessed_letters)}`")
+            fire_and_forget(self.channel.send(f"Vowels are already revealed \u2014 `{render_word(self.current_word, self.guessed_letters)}`"))
             return
         if letter in self.guessed_letters:
             return
         self.guessed_letters.add(letter)
 
         if letter in self.current_word.upper():
-            await self.channel.send(f"✅ `{letter}` is in it! `{render_word(self.current_word, self.guessed_letters)}`")
+            fire_and_forget(self.channel.send(f"✅ `{letter}` is in it! `{render_word(self.current_word, self.guessed_letters)}`"))
             if word_fully_revealed(self.current_word, self.guessed_letters):
                 await self._word_complete()
         else:
             self.wrong_letters.add(letter)
-            await self.channel.send(f"❌ `{letter}` is not in the word.\n{format_wrong_letters(self.wrong_letters)}")
+            fire_and_forget(self.channel.send(f"❌ `{letter}` is not in the word.\n{format_wrong_letters(self.wrong_letters)}"))
 
     async def _handle_word_guess(self, guess: str):
         if guess.upper() == self.current_word.upper():
             self.guessed_letters = {ch.upper() for ch in self.current_word if ch.isalpha()}
             await self._word_complete()
         else:
-            await self.channel.send(f"❌ Not quite, {self.player.display_name}.")
+            fire_and_forget(self.channel.send(f"❌ Not quite, {self.player.display_name}."))
 
     async def _word_complete(self):
         if self.word_start_time is not None:
@@ -589,7 +608,7 @@ class BlitzTimeGame:
             cumulative = now - self.game_start_time
             self.word_times.append((self.current_word, elapsed, cumulative))
         self.correct_count += 1
-        await self.channel.send(f"🎉 **{self.current_word}**! That's {self.correct_count} so far.")
+        fire_and_forget(self.channel.send(f"🎉 **{self.current_word}**! That's {self.correct_count} so far."))
         if self.active:
             await self._next_word()
 
@@ -675,7 +694,7 @@ class BlitzSpeedGame:
         )
         embed.add_field(name="\u200b", value=format_wrong_letters(self.wrong_letters), inline=False)
         embed.set_footer(text="Vowels are pre-filled. Type a letter or the full answer. Clock is running!")
-        await self.channel.send(embed=embed)
+        fire_and_forget(self.channel.send(embed=embed))
 
     async def handle_guess(self, message: discord.Message):
         if not self.active or message.author.id != self.player.id:
@@ -695,26 +714,26 @@ class BlitzSpeedGame:
 
     async def _handle_letter_guess(self, letter: str):
         if letter in VOWELS:
-            await self.channel.send(f"Vowels are already revealed \u2014 `{render_word(self.current_word, self.guessed_letters)}`")
+            fire_and_forget(self.channel.send(f"Vowels are already revealed \u2014 `{render_word(self.current_word, self.guessed_letters)}`"))
             return
         if letter in self.guessed_letters:
             return
         self.guessed_letters.add(letter)
 
         if letter in self.current_word.upper():
-            await self.channel.send(f"✅ `{letter}` is in it! `{render_word(self.current_word, self.guessed_letters)}`")
+            fire_and_forget(self.channel.send(f"✅ `{letter}` is in it! `{render_word(self.current_word, self.guessed_letters)}`"))
             if word_fully_revealed(self.current_word, self.guessed_letters):
                 await self._word_complete()
         else:
             self.wrong_letters.add(letter)
-            await self.channel.send(f"❌ `{letter}` is not in the word.\n{format_wrong_letters(self.wrong_letters)}")
+            fire_and_forget(self.channel.send(f"❌ `{letter}` is not in the word.\n{format_wrong_letters(self.wrong_letters)}"))
 
     async def _handle_word_guess(self, guess: str):
         if guess.upper() == self.current_word.upper():
             self.guessed_letters = {ch.upper() for ch in self.current_word if ch.isalpha()}
             await self._word_complete()
         else:
-            await self.channel.send(f"❌ Not quite, {self.player.display_name}.")
+            fire_and_forget(self.channel.send(f"❌ Not quite, {self.player.display_name}."))
 
     async def _word_complete(self):
         if self.word_start_time is not None:
@@ -726,7 +745,7 @@ class BlitzSpeedGame:
         if self.correct_count >= self.words_to_guess:
             await self.end_game()
         else:
-            await self.channel.send(f"🎉 **{self.current_word}**! {self.correct_count}/{self.words_to_guess} done.")
+            fire_and_forget(self.channel.send(f"🎉 **{self.current_word}**! {self.correct_count}/{self.words_to_guess} done."))
             await self._next_word()
 
     async def end_game(self):
