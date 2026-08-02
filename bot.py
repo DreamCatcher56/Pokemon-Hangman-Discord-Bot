@@ -377,7 +377,12 @@ class HangmanGame:
     def wrong_letters_display(self) -> str:
         return format_wrong_letters(self.wrong_letters)
 
-    async def start_round(self):
+    def _prepare_round(self) -> discord.Embed:
+        """Synchronously advances round state and builds the round-start
+        embed, without sending it. Kept separate from the send so callers
+        can guarantee a preceding announcement message is fully sent first,
+        instead of racing it against this embed as two independent
+        background tasks."""
         self.round_num += 1
         self.current_category, self.current_word = pick_word(self.word_lists)
         self.guessed_letters = set(VOWELS)
@@ -391,7 +396,16 @@ class HangmanGame:
         )
         embed.add_field(name="\u200b", value=self.wrong_letters_display(), inline=False)
         embed.set_footer(text=f"Vowels are pre-filled. {ROUND_TIMEOUT_SECONDS}s to guess. Type a letter or the full answer.")
-        fire_and_forget(self.channel.send(embed=embed))
+        return embed
+
+    async def start_round(self, prior_announcement: str | None = None):
+        embed = self._prepare_round()
+
+        async def _dispatch():
+            if prior_announcement:
+                await self.channel.send(prior_announcement)
+            await self.channel.send(embed=embed)
+        fire_and_forget(_dispatch())
 
         if self._timeout_task:
             self._timeout_task.cancel()
@@ -405,10 +419,8 @@ class HangmanGame:
         async with self._lock:
             if not self.active:
                 return
-            fire_and_forget(self.channel.send(
-                f"⏰ Time's up! The answer was **{self.current_word}**. No points awarded this round."
-            ))
-            await self._advance()
+            timeout_text = f"⏰ Time's up! The answer was **{self.current_word}**. No points awarded this round."
+            await self._advance(prior_announcement=timeout_text)
 
     async def handle_guess(self, message: discord.Message):
         if not self.active:
@@ -460,24 +472,24 @@ class HangmanGame:
             self.guess_durations.append(time.monotonic() - self.round_start_time)
         self.scores[author.id] += 1
         verb = "completed the word with the final letter" if completed_via_letter else "guessed the full answer"
-        fire_and_forget(self.channel.send(
+        announce_text = (
             f"🎉 **{author.display_name}** {verb}: **{self.current_word}**! Point awarded. "
             f"Score: {self.scores[author.id]}"
-        ))
-        await self._advance()
+        )
+        await self._advance(prior_announcement=announce_text)
 
-    async def _advance(self):
+    async def _advance(self, prior_announcement: str | None = None):
         # _advance() can run *inside* self._timeout_task (a natural round
         # timeout calls this directly) - cancelling it here would throw
         # CancelledError into this very coroutine at the next await below.
         if self._timeout_task and self._timeout_task is not asyncio.current_task():
             self._timeout_task.cancel()
         if self.round_num >= self.rounds_per_game:
-            await self.end_game()
+            await self.end_game(prior_announcement=prior_announcement)
         else:
-            await self.start_round()
+            await self.start_round(prior_announcement=prior_announcement)
 
-    async def end_game(self):
+    async def end_game(self, prior_announcement: str | None = None):
         self.active = False
         active_games.pop(self.channel.id, None)
 
@@ -503,6 +515,8 @@ class HangmanGame:
         else:
             embed.add_field(name="It's a tie!", value=", ".join(winners))
 
+        if prior_announcement:
+            await self.channel.send(prior_announcement)
         await self.channel.send(embed=embed)
 
     async def cancel(self, cancelled_by: discord.Member):
@@ -551,7 +565,10 @@ class BlitzTimeGame:
                 return
             await self.end_game()
 
-    async def _next_word(self):
+    def _prepare_next_word(self) -> discord.Embed:
+        """Synchronously advances to the next word and builds its embed,
+        without sending it. Kept separate from the send so callers can
+        guarantee a preceding "word complete" message is fully sent first."""
         self.current_category, self.current_word = pick_word(self.word_lists)
         self.guessed_letters = set(VOWELS)
         self.wrong_letters = set()
@@ -564,7 +581,16 @@ class BlitzTimeGame:
         )
         embed.add_field(name="\u200b", value=format_wrong_letters(self.wrong_letters), inline=False)
         embed.set_footer(text=f"Vowels are pre-filled. You have {BLITZ1_TIME_LIMIT_SECONDS}s total. Type a letter or the full answer.")
-        fire_and_forget(self.channel.send(embed=embed))
+        return embed
+
+    async def _next_word(self, prior_announcement: str | None = None):
+        embed = self._prepare_next_word()
+
+        async def _dispatch():
+            if prior_announcement:
+                await self.channel.send(prior_announcement)
+            await self.channel.send(embed=embed)
+        fire_and_forget(_dispatch())
 
     async def handle_guess(self, message: discord.Message):
         if not self.active or message.author.id != self.player.id:
@@ -615,9 +641,11 @@ class BlitzTimeGame:
             cumulative = now - self.game_start_time
             self.word_times.append((self.current_word, elapsed, cumulative))
         self.correct_count += 1
-        fire_and_forget(self.channel.send(f"🎉 **{self.current_word}**! That's {self.correct_count} so far."))
+        announce_text = f"🎉 **{self.current_word}**! That's {self.correct_count} so far."
         if self.active:
-            await self._next_word()
+            await self._next_word(prior_announcement=announce_text)
+        else:
+            fire_and_forget(self.channel.send(announce_text))
 
     async def end_game(self):
         self.active = False
@@ -688,7 +716,10 @@ class BlitzSpeedGame:
         self.start_time = time.perf_counter()
         await self._next_word()
 
-    async def _next_word(self):
+    def _prepare_next_word(self) -> discord.Embed:
+        """Synchronously advances to the next word and builds its embed,
+        without sending it. Kept separate from the send so callers can
+        guarantee a preceding "word complete" message is fully sent first."""
         self.current_category, self.current_word = pick_word(self.word_lists)
         self.guessed_letters = set(VOWELS)
         self.wrong_letters = set()
@@ -701,7 +732,16 @@ class BlitzSpeedGame:
         )
         embed.add_field(name="\u200b", value=format_wrong_letters(self.wrong_letters), inline=False)
         embed.set_footer(text="Vowels are pre-filled. Type a letter or the full answer. Clock is running!")
-        fire_and_forget(self.channel.send(embed=embed))
+        return embed
+
+    async def _next_word(self, prior_announcement: str | None = None):
+        embed = self._prepare_next_word()
+
+        async def _dispatch():
+            if prior_announcement:
+                await self.channel.send(prior_announcement)
+            await self.channel.send(embed=embed)
+        fire_and_forget(_dispatch())
 
     async def handle_guess(self, message: discord.Message):
         if not self.active or message.author.id != self.player.id:
@@ -755,8 +795,8 @@ class BlitzSpeedGame:
         if self.correct_count >= self.words_to_guess:
             await self.end_game()
         else:
-            fire_and_forget(self.channel.send(f"🎉 **{self.current_word}**! {self.correct_count}/{self.words_to_guess} done."))
-            await self._next_word()
+            announce_text = f"🎉 **{self.current_word}**! {self.correct_count}/{self.words_to_guess} done."
+            await self._next_word(prior_announcement=announce_text)
 
     async def end_game(self):
         self.active = False
