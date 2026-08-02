@@ -554,7 +554,6 @@ Medicham
 Meditite
 Meganium
 Melmetal
-Melmetal
 Meloetta
 Meltan
 Meowscarada
@@ -967,7 +966,6 @@ Veluza
 Venipede
 Venomoth
 Venonat
-Venusaur
 Venusaur
 Vespiquen
 Vibrava
