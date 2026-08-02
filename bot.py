@@ -811,6 +811,102 @@ async def hangman_error(ctx, error):
     await ctx.send(f"Something went wrong starting the game: {error}")
 
 
+# ---------------------------------------------------------------------------
+# Category-locked practice modes - regular hangman, but every word comes
+# from just one category. Shares all the same mechanics (join window,
+# scoring, solo average-guess-time, etc.) via the shared helper below.
+# ---------------------------------------------------------------------------
+
+async def _start_category_hangman(
+    ctx: commands.Context,
+    rounds: int,
+    category_key: str,
+    category_label: str,
+    command_name: str,
+):
+    if ctx.channel.id in active_games or ctx.channel.id in active_blitz_games:
+        await ctx.send("A game is already running in this channel! Finish it before starting a new one.")
+        return
+
+    if not (MIN_ROUNDS <= rounds <= MAX_ROUNDS):
+        await ctx.send(f"Rounds must be between {MIN_ROUNDS} and {MAX_ROUNDS}. Try `!{command_name} {DEFAULT_ROUNDS_PER_GAME}`.")
+        return
+
+    try:
+        word_lists = {category_key: load_word_lists()[category_key]}
+    except (FileNotFoundError, ValueError) as e:
+        await ctx.send(f"⚠️ Can't start a game: {e}")
+        return
+
+    view = JoinView(host=ctx.author, timeout=JOIN_WINDOW_SECONDS)
+    await ctx.send(
+        f"🎮 **{ctx.author.display_name}** started a {category_label}-only Hangman game! "
+        f"({rounds} round{'s' if rounds != 1 else ''})\n"
+        f"Click **Join Game** below to compete. Starting in {JOIN_WINDOW_SECONDS} seconds...",
+        view=view,
+    )
+    await view.wait()
+
+    players = view.players
+    game = HangmanGame(ctx.channel, players, word_lists, host=ctx.author, rounds_per_game=rounds)
+    active_games[ctx.channel.id] = game
+
+    mode = "Solo" if len(players) == 1 else "Competition"
+    names = ", ".join(p.display_name for p in players)
+    await ctx.send(f"**{mode} mode!** Players: {names}\n{rounds} rounds of {category_label} only. Good luck!")
+    await game.start_round()
+
+
+async def _category_hangman_error(ctx: commands.Context, error, command_name: str):
+    if isinstance(error, commands.BadArgument):
+        await ctx.send(
+            f"Rounds must be a whole number, e.g. `!{command_name} 8`. "
+            f"Defaulting is `!{command_name}` for {DEFAULT_ROUNDS_PER_GAME} rounds."
+        )
+        return
+    await ctx.send(f"Something went wrong starting the game: {error}")
+
+
+@bot.command(name="hangmanpokemon")
+async def hangman_pokemon(ctx: commands.Context, rounds: int = DEFAULT_ROUNDS_PER_GAME):
+    await _start_category_hangman(ctx, rounds, "Pokémon", "Pokémon", "hangmanpokemon")
+
+
+@hangman_pokemon.error
+async def hangman_pokemon_error(ctx, error):
+    await _category_hangman_error(ctx, error, "hangmanpokemon")
+
+
+@bot.command(name="hangmanitems")
+async def hangman_items(ctx: commands.Context, rounds: int = DEFAULT_ROUNDS_PER_GAME):
+    await _start_category_hangman(ctx, rounds, "Item", "Items", "hangmanitems")
+
+
+@hangman_items.error
+async def hangman_items_error(ctx, error):
+    await _category_hangman_error(ctx, error, "hangmanitems")
+
+
+@bot.command(name="hangmanmoves")
+async def hangman_moves(ctx: commands.Context, rounds: int = DEFAULT_ROUNDS_PER_GAME):
+    await _start_category_hangman(ctx, rounds, "Move", "Moves", "hangmanmoves")
+
+
+@hangman_moves.error
+async def hangman_moves_error(ctx, error):
+    await _category_hangman_error(ctx, error, "hangmanmoves")
+
+
+@bot.command(name="hangmanabilities")
+async def hangman_abilities(ctx: commands.Context, rounds: int = DEFAULT_ROUNDS_PER_GAME):
+    await _start_category_hangman(ctx, rounds, "Ability", "Abilities", "hangmanabilities")
+
+
+@hangman_abilities.error
+async def hangman_abilities_error(ctx, error):
+    await _category_hangman_error(ctx, error, "hangmanabilities")
+
+
 @bot.command(name="hangmanstop")
 async def hangman_stop(ctx: commands.Context):
     game = active_games.get(ctx.channel.id)
