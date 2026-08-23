@@ -691,7 +691,6 @@ class BlitzSpeedGame:
         avg_score, games_counted, rank, recent_scores = await record_score(
             self.mode, self.player.id, self.player.display_name, elapsed
         )
-        board_command = "!blitzboardp" if self.mode == "blitzp" else "!blitzboard"
         window_note = (
             f"last {games_counted} game{'s' if games_counted != 1 else ''}"
             if games_counted < ROLLING_AVERAGE_WINDOW
@@ -732,7 +731,7 @@ class BlitzSpeedGame:
         )
         embed.add_field(
             name="\u200b",
-            value=f"🌍 You're currently #{rank} on the leaderboard! (`{board_command}` to view)",
+            value=f"🌍 You're currently #{rank} on the leaderboard! (`!lb` to view)",
             inline=False,
         )
         await self.channel.send(embed=embed)
@@ -926,10 +925,9 @@ async def hangman_stop(ctx: commands.Context):
 
     blitz = active_blitz_games.get(ctx.channel.id)
     if blitz:
-        is_player = ctx.author.id == blitz.player.id
-        can_moderate = ctx.author.guild_permissions.manage_messages
-        if not (is_player or can_moderate):
-            await ctx.send("Only the player who started the blitz round (or a moderator) can stop it.")
+        # Only the player who started the blitz can stop it (no moderator override).
+        if ctx.author.id != blitz.player.id:
+            await ctx.send("Only the player who started the blitz round can stop it.")
             return
         await blitz.cancel(ctx.author)
         return
@@ -1002,38 +1000,32 @@ async def personal_bests(ctx: commands.Context):
     await ctx.send(embed=embed)
 
 
-@bot.command(name="blitzboard")
-async def blitzboard(ctx: commands.Context):
-    rows = await get_average_leaderboard("blitz")
-    if not rows:
-        await ctx.send("No Blitz scores yet \u2014 be the first with `!blitz`!")
-        return
-    lines = [
-        f"**{i}.** {username} \u2014 {format_score(avg_score)} (avg of {games_counted})"
-        for i, (username, avg_score, games_counted) in enumerate(rows, start=1)
-    ]
+@bot.command(name="lb")
+async def leaderboard(ctx: commands.Context):
+    blitz_rows = await get_average_leaderboard("blitz")
+    blitzp_rows = await get_average_leaderboard("blitzp")
+
+    def format_lines(rows: list[tuple[str, float, int]]) -> str:
+        if not rows:
+            return "_No scores yet_"
+        return "\n".join(
+            f"**{i}.** {username} \u2014 {format_score(avg_score)} (avg of {games_counted})"
+            for i, (username, avg_score, games_counted) in enumerate(rows, start=1)
+        )
+
     embed = discord.Embed(
-        title="🌍 Blitz Leaderboard \u2014 Rolling Average",
-        description="\n".join(lines),
+        title="🌍 Blitz Leaderboards \u2014 Rolling Average",
         color=discord.Color.blue(),
     )
-    await ctx.send(embed=embed)
-
-
-@bot.command(name="blitzboardp")
-async def blitzboardp(ctx: commands.Context):
-    rows = await get_average_leaderboard("blitzp")
-    if not rows:
-        await ctx.send("No Blitz (Phone) scores yet \u2014 be the first with `!blitzp`!")
-        return
-    lines = [
-        f"**{i}.** {username} \u2014 {format_score(avg_score)} (avg of {games_counted})"
-        for i, (username, avg_score, games_counted) in enumerate(rows, start=1)
-    ]
-    embed = discord.Embed(
-        title="🌍 Blitz (Phone) Leaderboard \u2014 Rolling Average",
-        description="\n".join(lines),
-        color=discord.Color.blue(),
+    embed.add_field(
+        name="⚡ Blitz",
+        value=format_lines(blitz_rows) if blitz_rows else "_No scores yet — try `!blitz`!_",
+        inline=False,
+    )
+    embed.add_field(
+        name="📱 Blitz (Phone)",
+        value=format_lines(blitzp_rows) if blitzp_rows else "_No scores yet — try `!blitzp`!_",
+        inline=False,
     )
     await ctx.send(embed=embed)
 
