@@ -698,8 +698,8 @@ class BlitzSpeedGame:
             else f"last {ROLLING_AVERAGE_WINDOW} games"
         )
 
-        # recent_scores is newest-first; show them oldest → newest for readability
-        scores_display = ", ".join(f"{s:.3f}s" for s in reversed(recent_scores))
+        # recent_scores is newest-first (ORDER BY id DESC); keep that order
+        scores_display = ", ".join(f"{s:.3f}s" for s in recent_scores)
 
         if cancelled:
             embed = discord.Embed(
