@@ -48,7 +48,7 @@ ROUND_TIMEOUT_SECONDS = 100
 VOWELS = set("AEIOU")
 
 BLITZ_WORDS_TO_GUESS = 5
-ROLLING_AVERAGE_WINDOW = 7  # skill metric = avg of a player's last N games, per mode
+ROLLING_AVERAGE_WINDOW = 5  # skill metric = avg of a player's last N games, per mode
 LEADERBOARD_SIZE = 10
 
 # Point this at your Railway volume's mount path (e.g. "/data/blitz_scores.db")
@@ -247,7 +247,7 @@ def init_db():
     _init_db_sync()
 
 
-def _record_score_sync(mode: str, user_id: int, username: str, score: float) -> tuple[float, int, int]:
+def _record_score_sync(mode: str, user_id: int, username: str, score: float) -> tuple[float, int, int, list[float]]:
     conn = _get_connection()
     try:
         conn.execute(
@@ -285,14 +285,16 @@ def _record_score_sync(mode: str, user_id: int, username: str, score: float) -> 
             (mode, ROLLING_AVERAGE_WINDOW, avg_score),
         ).fetchone()[0]
 
-        return avg_score, games_counted, rank
+        return avg_score, games_counted, rank, recent_scores
     finally:
         conn.close()
 
 
-async def record_score(mode: str, user_id: int, username: str, score: float) -> tuple[float, int, int]:
+async def record_score(mode: str, user_id: int, username: str, score: float) -> tuple[float, int, int, list[float]]:
     """Logs a completed round and returns (rolling_average, games_counted,
-    current_leaderboard_rank) for that player in that mode."""
+    current_leaderboard_rank, recent_scores) for that player in that mode.
+    recent_scores is the list of the last up to ROLLING_AVERAGE_WINDOW scores
+    (newest first) that the rolling average is based on."""
     return await asyncio.to_thread(_record_score_sync, mode, user_id, username, score)
 
 
@@ -681,12 +683,12 @@ class BlitzSpeedGame:
             announce_text = f"🎉 **{self.current_word}**! {self.correct_count}/{self.words_to_guess} done."
             await self._next_word(prior_announcement=announce_text)
 
-    async def end_game(self):
+    async def end_game(self, forced_score: float | None = None, cancelled: bool = False):
         self.active = False
         active_blitz_games.pop(self.channel.id, None)
-        elapsed = time.perf_counter() - self.start_time
+        elapsed = forced_score if forced_score is not None else (time.perf_counter() - self.start_time)
 
-        avg_score, games_counted, rank = await record_score(
+        avg_score, games_counted, rank, recent_scores = await record_score(
             self.mode, self.player.id, self.player.display_name, elapsed
         )
         board_command = "!blitzboardp" if self.mode == "blitzp" else "!blitzboard"
@@ -696,29 +698,76 @@ class BlitzSpeedGame:
             else f"last {ROLLING_AVERAGE_WINDOW} games"
         )
 
-        embed = discord.Embed(
-            title="🏁 Speed Blitz Complete!",
-            description=(
-                f"**{self.player.display_name}** guessed **{self.current_word}** to finish "
-                f"{self.words_to_guess} word(s)!"
-            ),
-            color=discord.Color.gold(),
-        )
-        embed.add_field(name="This Game", value=f"{elapsed:.3f} seconds")
+        # recent_scores is newest-first; show them oldest → newest for readability
+        scores_display = ", ".join(f"{s:.3f}s" for s in reversed(recent_scores))
+
+        if cancelled:
+            embed = discord.Embed(
+                title="🛑 Speed Blitz Cancelled (Penalty Applied)",
+                description=(
+                    f"**{self.player.display_name}** stopped the round early. "
+                    f"Penalty score recorded: **{elapsed:.3f}s** "
+                    f"(time so far + {self.words_to_guess - self.correct_count} remaining word(s) × 30s)."
+                ),
+                color=discord.Color.red(),
+            )
+        else:
+            embed = discord.Embed(
+                title="🏁 Speed Blitz Complete!",
+                description=(
+                    f"**{self.player.display_name}** guessed **{self.current_word}** to finish "
+                    f"{self.words_to_guess} word(s)!"
+                ),
+                color=discord.Color.gold(),
+            )
+            embed.add_field(name="This Game", value=f"{elapsed:.3f} seconds")
+            for name, value in build_time_interval_fields(self.word_times):
+                embed.add_field(name=name, value=value, inline=False)
+
         embed.add_field(name="Rolling Average", value=f"{format_score(avg_score)} ({window_note})")
+        embed.add_field(
+            name=f"Last {games_counted} Score{'s' if games_counted != 1 else ''}",
+            value=scores_display or "—",
+            inline=False,
+        )
         embed.add_field(
             name="\u200b",
             value=f"🌍 You're currently #{rank} on the leaderboard! (`{board_command}` to view)",
             inline=False,
         )
-        for name, value in build_time_interval_fields(self.word_times):
-            embed.add_field(name=name, value=value, inline=False)
         await self.channel.send(embed=embed)
 
     async def cancel(self, cancelled_by: discord.Member):
+        # Only the player who started the blitz can receive a penalty score.
+        # Moderators / others stopping the game just cancel cleanly.
+        is_starter = cancelled_by.id == self.player.id
+        elapsed_so_far = (time.perf_counter() - self.start_time) if self.start_time is not None else 0.0
+        words_remaining = self.words_to_guess - self.correct_count
+
+        # Grace period: cancel within 5s of start with zero words completed
+        # is treated as a misclick and is not penalized / not recorded.
+        in_grace = (
+            is_starter
+            and elapsed_so_far < 5.0
+            and self.correct_count == 0
+        )
+
+        if is_starter and not in_grace:
+            # Penalty: time elapsed so far + (words remaining) × 30s
+            penalty_score = elapsed_so_far + (words_remaining * 30.0)
+            await self.end_game(forced_score=penalty_score, cancelled=True)
+            return
+
+        # Clean cancel (moderator, or starter within grace window)
         self.active = False
         active_blitz_games.pop(self.channel.id, None)
-        await self.channel.send(f"🛑 Speed Blitz cancelled by **{cancelled_by.display_name}**.")
+        if in_grace:
+            await self.channel.send(
+                f"🛑 Speed Blitz cancelled by **{cancelled_by.display_name}** "
+                f"(within the 5s grace period — no penalty applied)."
+            )
+        else:
+            await self.channel.send(f"🛑 Speed Blitz cancelled by **{cancelled_by.display_name}**.")
 
 
 # ---------------------------------------------------------------------------
