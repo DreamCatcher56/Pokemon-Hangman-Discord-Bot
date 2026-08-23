@@ -26,20 +26,6 @@ except ImportError:
 # Config
 # ---------------------------------------------------------------------------
 
-DATA_FILES = {
-    "Pokémon": "data/pokemon.txt",
-    "Ability": "data/abilities.txt",
-    "Move": "data/moves.txt",
-    "Item": "data/items.txt",
-}
-
-# Same categories as regular hangman, except Items are pulled from a
-# separate curated list for the blitz modes.
-BLITZ_DATA_FILES = {
-    **DATA_FILES,
-    "Item": "data/blitzitems.txt",
-}
-
 DEFAULT_ROUNDS_PER_GAME = 7
 MIN_ROUNDS = 1
 MAX_ROUNDS = 20
@@ -47,9 +33,8 @@ JOIN_WINDOW_SECONDS = 12
 ROUND_TIMEOUT_SECONDS = 100
 VOWELS = set("AEIOU")
 
-BLITZ1_TIME_LIMIT_SECONDS = 100
-BLITZ2_WORDS_TO_GUESS = 5
-PERSONAL_BEST_COUNT = 3
+BLITZ_WORDS_TO_GUESS = 5
+ROLLING_AVERAGE_WINDOW = 7  # skill metric = avg of a player's last N games, per mode
 LEADERBOARD_SIZE = 10
 
 # Point this at your Railway volume's mount path (e.g. "/data/blitz_scores.db")
@@ -63,8 +48,8 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # channel_id -> HangmanGame
 active_games: dict[int, "HangmanGame"] = {}
 
-# channel_id -> BlitzTimeGame | BlitzSpeedGame
-active_blitz_games: dict[int, "BlitzTimeGame | BlitzSpeedGame"] = {}
+# channel_id -> BlitzSpeedGame
+active_blitz_games: dict[int, "BlitzSpeedGame"] = {}
 
 
 def fire_and_forget(coro) -> asyncio.Task:
@@ -164,29 +149,19 @@ def build_time_interval_fields(word_times: list[tuple[str, float, float]], max_c
     return fields
 
 
+def format_score(score: float) -> str:
+    return f"{score:.3f}s"
+
+
 # ---------------------------------------------------------------------------
 # Persistent leaderboard storage (SQLite)
 #
-# One row per completed blitz round. Personal bests and the global
-# leaderboard are both just queries over this one small table, so nothing
-# is duplicated on disk. For blitz1, a higher score (words guessed) is
-# better; for blitz2, a lower score (seconds elapsed) is better.
+# One row per completed blitz round. The skill metric is a player's ROLLING
+# AVERAGE over their last ROLLING_AVERAGE_WINDOW games in a given mode (not
+# their single best-ever score) - this is what both !pb and the leaderboard
+# commands rank by, so a single lucky short-word run can't dominate. Lower
+# average time is better, same as a single score.
 # ---------------------------------------------------------------------------
-
-def _sort_order(mode: str) -> str:
-    return "DESC" if mode == "blitz1" else "ASC"
-
-
-def _better_than_op(mode: str) -> str:
-    return ">" if mode == "blitz1" else "<"
-
-
-def format_score(mode: str, score: float) -> str:
-    if mode == "blitz1":
-        words = int(score)
-        return f"{words} word{'s' if words != 1 else ''}"
-    return f"{score:.3f}s"
-
 
 def _get_connection() -> sqlite3.Connection:
     db_dir = os.path.dirname(BLITZ_DB_PATH)
@@ -214,8 +189,8 @@ def _init_db_sync():
         # Older deployments created this table with a
         # CHECK(mode IN ('blitz1', 'blitz2')) constraint. SQLite can't drop
         # a CHECK constraint with ALTER TABLE, so detect it and rebuild the
-        # table (preserving all existing rows) whenever new modes - like
-        # blitz2p - need to be inserted.
+        # table (preserving all existing rows) whenever new modes need to
+        # be inserted.
         row = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'blitz_scores'"
         ).fetchone()
@@ -239,6 +214,13 @@ def _init_db_sync():
             )
             conn.execute("DROP TABLE blitz_scores_old")
 
+        # blitz1/blitz2/blitz2p were retired in favor of blitz/blitzp with a
+        # rolling-average skill metric. Old scores under the retired mode
+        # names don't carry over - clear them out so everyone starts fresh
+        # under the new modes instead of leaving orphaned rows sitting in
+        # the database.
+        conn.execute("DELETE FROM blitz_scores WHERE mode IN ('blitz1', 'blitz2', 'blitz2p')")
+
         conn.execute("CREATE INDEX IF NOT EXISTS idx_blitz_mode_score ON blitz_scores(mode, score)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_blitz_mode_user ON blitz_scores(mode, user_id)")
         conn.commit()
@@ -251,67 +233,108 @@ def init_db():
     _init_db_sync()
 
 
-def _record_score_sync(mode: str, user_id: int, username: str, score: float) -> tuple[int, int]:
+def _record_score_sync(mode: str, user_id: int, username: str, score: float) -> tuple[float, int, int]:
     conn = _get_connection()
     try:
         conn.execute(
             "INSERT INTO blitz_scores (mode, user_id, username, score, achieved_at) VALUES (?, ?, ?, ?, ?)",
             (mode, user_id, username, score, datetime.now(timezone.utc).isoformat()),
         )
-        op = _better_than_op(mode)
-        personal_rank = conn.execute(
-            f"SELECT COUNT(*) + 1 FROM blitz_scores WHERE mode = ? AND user_id = ? AND score {op} ?",
-            (mode, user_id, score),
-        ).fetchone()[0]
-        global_rank = conn.execute(
-            f"SELECT COUNT(*) + 1 FROM blitz_scores WHERE mode = ? AND score {op} ?",
-            (mode, score),
-        ).fetchone()[0]
         conn.commit()
-        return personal_rank, global_rank
+
+        recent_scores = [
+            row[0]
+            for row in conn.execute(
+                "SELECT score FROM blitz_scores WHERE mode = ? AND user_id = ? ORDER BY id DESC LIMIT ?",
+                (mode, user_id, ROLLING_AVERAGE_WINDOW),
+            ).fetchall()
+        ]
+        avg_score = sum(recent_scores) / len(recent_scores)
+        games_counted = len(recent_scores)
+
+        rank = conn.execute(
+            """
+            WITH ranked AS (
+                SELECT user_id, score,
+                       ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY id DESC) AS rn
+                FROM blitz_scores
+                WHERE mode = ?
+            ),
+            averages AS (
+                SELECT user_id, AVG(score) AS avg_score
+                FROM ranked
+                WHERE rn <= ?
+                GROUP BY user_id
+            )
+            SELECT COUNT(*) + 1 FROM averages WHERE avg_score < ?
+            """,
+            (mode, ROLLING_AVERAGE_WINDOW, avg_score),
+        ).fetchone()[0]
+
+        return avg_score, games_counted, rank
     finally:
         conn.close()
 
 
-async def record_score(mode: str, user_id: int, username: str, score: float) -> tuple[int, int]:
-    """Logs a completed round and returns (personal_rank, global_rank) for that score."""
+async def record_score(mode: str, user_id: int, username: str, score: float) -> tuple[float, int, int]:
+    """Logs a completed round and returns (rolling_average, games_counted,
+    current_leaderboard_rank) for that player in that mode."""
     return await asyncio.to_thread(_record_score_sync, mode, user_id, username, score)
 
 
-def _get_personal_bests_sync(mode: str, user_id: int, limit: int) -> list[tuple[float, str]]:
+def _get_rolling_average_sync(mode: str, user_id: int) -> tuple[float, int] | None:
     conn = _get_connection()
     try:
-        order = _sort_order(mode)
+        recent_scores = [
+            row[0]
+            for row in conn.execute(
+                "SELECT score FROM blitz_scores WHERE mode = ? AND user_id = ? ORDER BY id DESC LIMIT ?",
+                (mode, user_id, ROLLING_AVERAGE_WINDOW),
+            ).fetchall()
+        ]
+        if not recent_scores:
+            return None
+        return sum(recent_scores) / len(recent_scores), len(recent_scores)
+    finally:
+        conn.close()
+
+
+async def get_rolling_average(mode: str, user_id: int) -> tuple[float, int] | None:
+    return await asyncio.to_thread(_get_rolling_average_sync, mode, user_id)
+
+
+def _get_average_leaderboard_sync(mode: str, limit: int) -> list[tuple[str, float, int]]:
+    conn = _get_connection()
+    try:
         rows = conn.execute(
-            f"SELECT score, achieved_at FROM blitz_scores WHERE mode = ? AND user_id = ? "
-            f"ORDER BY score {order} LIMIT ?",
-            (mode, user_id, limit),
+            """
+            WITH ranked AS (
+                SELECT user_id, username, score,
+                       ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY id DESC) AS rn
+                FROM blitz_scores
+                WHERE mode = ?
+            ),
+            averages AS (
+                SELECT user_id, AVG(score) AS avg_score, COUNT(*) AS games_counted
+                FROM ranked
+                WHERE rn <= ?
+                GROUP BY user_id
+            )
+            SELECT ranked.username, averages.avg_score, averages.games_counted
+            FROM averages
+            JOIN ranked ON ranked.user_id = averages.user_id AND ranked.rn = 1
+            ORDER BY averages.avg_score ASC
+            LIMIT ?
+            """,
+            (mode, ROLLING_AVERAGE_WINDOW, limit),
         ).fetchall()
         return rows
     finally:
         conn.close()
 
 
-async def get_personal_bests(mode: str, user_id: int, limit: int = PERSONAL_BEST_COUNT) -> list[tuple[float, str]]:
-    return await asyncio.to_thread(_get_personal_bests_sync, mode, user_id, limit)
-
-
-def _get_leaderboard_sync(mode: str, limit: int) -> list[tuple[str, float, str]]:
-    conn = _get_connection()
-    try:
-        order = _sort_order(mode)
-        rows = conn.execute(
-            f"SELECT username, score, achieved_at FROM blitz_scores WHERE mode = ? "
-            f"ORDER BY score {order} LIMIT ?",
-            (mode, limit),
-        ).fetchall()
-        return rows
-    finally:
-        conn.close()
-
-
-async def get_leaderboard(mode: str, limit: int = LEADERBOARD_SIZE) -> list[tuple[str, float, str]]:
-    return await asyncio.to_thread(_get_leaderboard_sync, mode, limit)
+async def get_average_leaderboard(mode: str, limit: int = LEADERBOARD_SIZE) -> list[tuple[str, float, int]]:
+    return await asyncio.to_thread(_get_average_leaderboard_sync, mode, limit)
 
 
 # ---------------------------------------------------------------------------
@@ -531,176 +554,22 @@ class HangmanGame:
 # Blitz solo game modes
 # ---------------------------------------------------------------------------
 
-class BlitzTimeGame:
-    """!blitz1 - guess as many words as possible within a fixed time limit."""
-
-    def __init__(self, channel: discord.TextChannel, player: discord.Member, word_lists):
-        self.channel = channel
-        self.player = player
-        self.word_lists = word_lists
-        self.current_word = ""
-        self.current_category = ""
-        self.guessed_letters: set[str] = set()
-        self.wrong_letters: set[str] = set()
-        self.correct_count = 0
-        self.active = True
-        self._timeout_task: asyncio.Task | None = None
-        self._lock = asyncio.Lock()
-        self.game_start_time: float | None = None
-        self.word_start_time: float | None = None
-        self.word_times: list[tuple[str, float, float]] = []
-
-    async def start(self):
-        self.game_start_time = time.perf_counter()
-        self._timeout_task = asyncio.create_task(self._run_timer())
-        await self._next_word()
-
-    async def _run_timer(self):
-        try:
-            await asyncio.sleep(BLITZ1_TIME_LIMIT_SECONDS)
-        except asyncio.CancelledError:
-            return
-        async with self._lock:
-            if not self.active:
-                return
-            await self.end_game()
-
-    def _prepare_next_word(self) -> discord.Embed:
-        """Synchronously advances to the next word and builds its embed,
-        without sending it. Kept separate from the send so callers can
-        guarantee a preceding "word complete" message is fully sent first."""
-        self.current_category, self.current_word = pick_word(self.word_lists)
-        self.guessed_letters = set(VOWELS)
-        self.wrong_letters = set()
-        self.word_start_time = time.perf_counter()
-
-        embed = discord.Embed(
-            title=f"⚡ Blitz! ({self.correct_count} guessed so far)",
-            description=f"Category: **{self.current_category}**\n\n`{render_word(self.current_word, self.guessed_letters)}`",
-            color=discord.Color.orange(),
-        )
-        embed.add_field(name="\u200b", value=format_wrong_letters(self.wrong_letters), inline=False)
-        embed.set_footer(text=f"Vowels are pre-filled. You have {BLITZ1_TIME_LIMIT_SECONDS}s total. Type a letter or the full answer.")
-        return embed
-
-    async def _next_word(self, prior_announcement: str | None = None):
-        embed = self._prepare_next_word()
-
-        async def _dispatch():
-            if prior_announcement:
-                await self.channel.send(prior_announcement)
-            await self.channel.send(embed=embed)
-        fire_and_forget(_dispatch())
-
-    async def handle_guess(self, message: discord.Message):
-        if not self.active or message.author.id != self.player.id:
-            return
-
-        content = message.content.strip()
-        if not content or not content.replace(" ", "").isalpha():
-            return
-
-        async with self._lock:
-            if not self.active:
-                return
-            if len(content) == 1:
-                await self._handle_letter_guess(message, content.upper())
-            else:
-                await self._handle_word_guess(message, content)
-
-    async def _handle_letter_guess(self, message: discord.Message, letter: str):
-        if letter in VOWELS:
-            fire_and_forget(self.channel.send(f"Vowels are already revealed \u2014 `{render_word(self.current_word, self.guessed_letters)}`"))
-            return
-        if letter in self.guessed_letters:
-            return
-        self.guessed_letters.add(letter)
-
-        if letter in self.current_word.upper():
-            fire_and_forget(self.channel.send(
-                f"✅ `{letter}` is in it! `{render_word(self.current_word, self.guessed_letters)}`\n"
-                f"{format_wrong_letters(self.wrong_letters)}"
-            ))
-            if word_fully_revealed(self.current_word, self.guessed_letters):
-                await self._word_complete()
-        else:
-            self.wrong_letters.add(letter)
-            fire_and_forget(message.add_reaction("❌"))
-
-    async def _handle_word_guess(self, message: discord.Message, guess: str):
-        if guess.upper() == self.current_word.upper():
-            self.guessed_letters = {ch.upper() for ch in self.current_word if ch.isalpha()}
-            await self._word_complete()
-        else:
-            fire_and_forget(message.add_reaction("❌"))
-
-    async def _word_complete(self):
-        if self.word_start_time is not None:
-            now = time.perf_counter()
-            elapsed = now - self.word_start_time
-            cumulative = now - self.game_start_time
-            self.word_times.append((self.current_word, elapsed, cumulative))
-        self.correct_count += 1
-        announce_text = f"🎉 **{self.current_word}**! That's {self.correct_count} so far."
-        if self.active:
-            await self._next_word(prior_announcement=announce_text)
-        else:
-            fire_and_forget(self.channel.send(announce_text))
-
-    async def end_game(self):
-        self.active = False
-        # end_game() can run *inside* self._timeout_task (the 100s timer
-        # firing calls this directly) - cancelling it here would throw
-        # CancelledError into this very coroutine at the next await below,
-        # killing it before the score gets recorded or the embed gets sent.
-        if self._timeout_task and self._timeout_task is not asyncio.current_task():
-            self._timeout_task.cancel()
-        active_blitz_games.pop(self.channel.id, None)
-
-        personal_rank, global_rank = await record_score(
-            "blitz1", self.player.id, self.player.display_name, float(self.correct_count)
-        )
-
-        embed = discord.Embed(
-            title="⏰ Blitz Round Over!",
-            description=f"**{self.player.display_name}** guessed **{self.correct_count}** word(s) in {BLITZ1_TIME_LIMIT_SECONDS} seconds!",
-            color=discord.Color.gold(),
-        )
-        notes = []
-        if personal_rank <= PERSONAL_BEST_COUNT:
-            notes.append(f"🌟 New personal best \u2014 #{personal_rank} in your top {PERSONAL_BEST_COUNT}! (`!pb` to view)")
-        if global_rank <= LEADERBOARD_SIZE:
-            notes.append(f"🌍 That lands at #{global_rank} on the all-time leaderboard! (`!blitzboard1` to view)")
-        if notes:
-            embed.add_field(name="\u200b", value="\n".join(notes), inline=False)
-        for name, value in build_time_interval_fields(self.word_times):
-            embed.add_field(name=name, value=value, inline=False)
-        await self.channel.send(embed=embed)
-
-    async def cancel(self, cancelled_by: discord.Member):
-        self.active = False
-        if self._timeout_task and self._timeout_task is not asyncio.current_task():
-            self._timeout_task.cancel()
-        active_blitz_games.pop(self.channel.id, None)
-        await self.channel.send(f"🛑 Blitz round cancelled by **{cancelled_by.display_name}**.")
-
-
 class BlitzSpeedGame:
-    """!blitz2 / !b2p - guess a fixed number of words as fast as possible, timed to the millisecond."""
+    """!blitz / !blitzp - guess a fixed number of words as fast as possible, timed to the millisecond."""
 
     def __init__(
         self,
         channel: discord.TextChannel,
         player: discord.Member,
         word_lists,
-        words_to_guess: int = BLITZ2_WORDS_TO_GUESS,
-        mode: str = "blitz2",
+        words_to_guess: int = BLITZ_WORDS_TO_GUESS,
+        mode: str = "blitz",
     ):
         self.channel = channel
         self.player = player
         self.word_lists = word_lists
         self.words_to_guess = words_to_guess
-        self.mode = mode  # "blitz2" or "blitz2p" - which leaderboard this run scores to
+        self.mode = mode  # "blitz" or "blitzp" - which leaderboard/rolling average this run counts toward
         self.current_word = ""
         self.current_category = ""
         self.guessed_letters: set[str] = set()
@@ -803,10 +672,15 @@ class BlitzSpeedGame:
         active_blitz_games.pop(self.channel.id, None)
         elapsed = time.perf_counter() - self.start_time
 
-        personal_rank, global_rank = await record_score(
+        avg_score, games_counted, rank = await record_score(
             self.mode, self.player.id, self.player.display_name, elapsed
         )
-        board_command = "!blitzboard2p" if self.mode == "blitz2p" else "!blitzboard2"
+        board_command = "!blitzboardp" if self.mode == "blitzp" else "!blitzboard"
+        window_note = (
+            f"last {games_counted} game{'s' if games_counted != 1 else ''}"
+            if games_counted < ROLLING_AVERAGE_WINDOW
+            else f"last {ROLLING_AVERAGE_WINDOW} games"
+        )
 
         embed = discord.Embed(
             title="🏁 Speed Blitz Complete!",
@@ -816,14 +690,13 @@ class BlitzSpeedGame:
             ),
             color=discord.Color.gold(),
         )
-        embed.add_field(name="Your Time", value=f"{elapsed:.3f} seconds")
-        notes = []
-        if personal_rank <= PERSONAL_BEST_COUNT:
-            notes.append(f"🌟 New personal best \u2014 #{personal_rank} in your top {PERSONAL_BEST_COUNT}! (`!pb` to view)")
-        if global_rank <= LEADERBOARD_SIZE:
-            notes.append(f"🌍 That lands at #{global_rank} on the all-time leaderboard! (`{board_command}` to view)")
-        if notes:
-            embed.add_field(name="\u200b", value="\n".join(notes), inline=False)
+        embed.add_field(name="This Game", value=f"{elapsed:.3f} seconds")
+        embed.add_field(name="Rolling Average", value=f"{format_score(avg_score)} ({window_note})")
+        embed.add_field(
+            name="\u200b",
+            value=f"🌍 You're currently #{rank} on the leaderboard! (`{board_command}` to view)",
+            inline=False,
+        )
         for name, value in build_time_interval_fields(self.word_times):
             embed.add_field(name=name, value=value, inline=False)
         await self.channel.send(embed=embed)
@@ -1001,8 +874,8 @@ async def hangman_stop(ctx: commands.Context):
     await ctx.send("There's no game running in this channel.")
 
 
-@bot.command(name="blitz1")
-async def blitz1_start(ctx: commands.Context):
+@bot.command(name="blitz")
+async def blitz_start(ctx: commands.Context):
     if ctx.channel.id in active_games or ctx.channel.id in active_blitz_games:
         await ctx.send("A game is already running in this channel! Finish it before starting a new one.")
         return
@@ -1013,38 +886,17 @@ async def blitz1_start(ctx: commands.Context):
         await ctx.send(f"⚠️ Can't start a game: {e}")
         return
 
-    game = BlitzTimeGame(ctx.channel, ctx.author, word_lists)
+    game = BlitzSpeedGame(ctx.channel, ctx.author, word_lists, mode="blitz")
     active_blitz_games[ctx.channel.id] = game
     await ctx.send(
-        f"⚡ **{ctx.author.display_name}** started a Blitz round! Guess as many words as you can in "
-        f"{BLITZ1_TIME_LIMIT_SECONDS} seconds. Vowels are pre-filled. Go!"
-    )
-    await game.start()
-
-
-@bot.command(name="blitz2")
-async def blitz2_start(ctx: commands.Context):
-    if ctx.channel.id in active_games or ctx.channel.id in active_blitz_games:
-        await ctx.send("A game is already running in this channel! Finish it before starting a new one.")
-        return
-
-    try:
-        word_lists = load_word_lists(BLITZ_DATA_FILES)
-    except (FileNotFoundError, ValueError) as e:
-        await ctx.send(f"⚠️ Can't start a game: {e}")
-        return
-
-    game = BlitzSpeedGame(ctx.channel, ctx.author, word_lists)
-    active_blitz_games[ctx.channel.id] = game
-    await ctx.send(
-        f"⚡ **{ctx.author.display_name}** started a Speed Blitz! Guess {BLITZ2_WORDS_TO_GUESS} words as fast "
+        f"⚡ **{ctx.author.display_name}** started a Speed Blitz! Guess {BLITZ_WORDS_TO_GUESS} words as fast "
         f"as you can \u2014 the clock is running down to the millisecond. Go!"
     )
     await game.start()
 
 
-@bot.command(name="b2p")
-async def blitz2_phone_start(ctx: commands.Context):
+@bot.command(name="blitzp")
+async def blitz_phone_start(ctx: commands.Context):
     if ctx.channel.id in active_games or ctx.channel.id in active_blitz_games:
         await ctx.send("A game is already running in this channel! Finish it before starting a new one.")
         return
@@ -1055,10 +907,10 @@ async def blitz2_phone_start(ctx: commands.Context):
         await ctx.send(f"⚠️ Can't start a game: {e}")
         return
 
-    game = BlitzSpeedGame(ctx.channel, ctx.author, word_lists, mode="blitz2p")
+    game = BlitzSpeedGame(ctx.channel, ctx.author, word_lists, mode="blitzp")
     active_blitz_games[ctx.channel.id] = game
     await ctx.send(
-        f"⚡ **{ctx.author.display_name}** started a Speed Blitz (Phone)! Guess {BLITZ2_WORDS_TO_GUESS} words as "
+        f"⚡ **{ctx.author.display_name}** started a Speed Blitz (Phone)! Guess {BLITZ_WORDS_TO_GUESS} words as "
         f"fast as you can \u2014 the clock is running down to the millisecond. Scores here go to the phone "
         f"leaderboard. Go!"
     )
@@ -1067,63 +919,56 @@ async def blitz2_phone_start(ctx: commands.Context):
 
 @bot.command(name="pb")
 async def personal_bests(ctx: commands.Context):
-    blitz1_rows = await get_personal_bests("blitz1", ctx.author.id)
-    blitz2_rows = await get_personal_bests("blitz2", ctx.author.id)
-    blitz2p_rows = await get_personal_bests("blitz2p", ctx.author.id)
+    blitz_avg = await get_rolling_average("blitz", ctx.author.id)
+    blitzp_avg = await get_rolling_average("blitzp", ctx.author.id)
 
-    command_for_mode = {"blitz1": "blitz1", "blitz2": "blitz2", "blitz2p": "b2p"}
+    def render(result: tuple[float, int] | None, command_name: str) -> str:
+        if result is None:
+            return f"No scores yet \u2014 try `!{command_name}`!"
+        avg_score, games_counted = result
+        window_note = (
+            f"last {games_counted} game{'s' if games_counted != 1 else ''}"
+            if games_counted < ROLLING_AVERAGE_WINDOW
+            else f"last {ROLLING_AVERAGE_WINDOW} games"
+        )
+        return f"{format_score(avg_score)} ({window_note})"
 
-    def render(mode, rows):
-        if not rows:
-            return f"No scores yet \u2014 try `!{command_for_mode[mode]}`!"
-        return "\n".join(f"**{i}.** {format_score(mode, score)}" for i, (score, _) in enumerate(rows, start=1))
-
-    embed = discord.Embed(title=f"🏅 {ctx.author.display_name}'s Personal Bests", color=discord.Color.purple())
-    embed.add_field(name="⚡ Blitz1 \u2014 Most Words in 100s", value=render("blitz1", blitz1_rows), inline=False)
-    embed.add_field(name="🏁 Blitz2 \u2014 Fastest 5 Words", value=render("blitz2", blitz2_rows), inline=False)
-    embed.add_field(name="📱 Blitz2 (Phone) \u2014 Fastest 5 Words", value=render("blitz2p", blitz2p_rows), inline=False)
+    embed = discord.Embed(title=f"🏅 {ctx.author.display_name}'s Rolling Averages", color=discord.Color.purple())
+    embed.add_field(name="⚡ Blitz \u2014 Fastest 5 Words", value=render(blitz_avg, "blitz"), inline=False)
+    embed.add_field(name="📱 Blitz (Phone) \u2014 Fastest 5 Words", value=render(blitzp_avg, "blitzp"), inline=False)
     await ctx.send(embed=embed)
 
 
-@bot.command(name="blitzboard1")
-async def blitzboard1(ctx: commands.Context):
-    rows = await get_leaderboard("blitz1")
+@bot.command(name="blitzboard")
+async def blitzboard(ctx: commands.Context):
+    rows = await get_average_leaderboard("blitz")
     if not rows:
-        await ctx.send("No Blitz1 scores yet \u2014 be the first with `!blitz1`!")
+        await ctx.send("No Blitz scores yet \u2014 be the first with `!blitz`!")
         return
-    lines = [f"**{i}.** {username} \u2014 {format_score('blitz1', score)}" for i, (username, score, _) in enumerate(rows, start=1)]
+    lines = [
+        f"**{i}.** {username} \u2014 {format_score(avg_score)} (avg of {games_counted})"
+        for i, (username, avg_score, games_counted) in enumerate(rows, start=1)
+    ]
     embed = discord.Embed(
-        title="🌍 Blitz1 All-Time Leaderboard",
+        title="🌍 Blitz Leaderboard \u2014 Rolling Average",
         description="\n".join(lines),
         color=discord.Color.blue(),
     )
     await ctx.send(embed=embed)
 
 
-@bot.command(name="blitzboard2")
-async def blitzboard2(ctx: commands.Context):
-    rows = await get_leaderboard("blitz2")
+@bot.command(name="blitzboardp")
+async def blitzboardp(ctx: commands.Context):
+    rows = await get_average_leaderboard("blitzp")
     if not rows:
-        await ctx.send("No Blitz2 scores yet \u2014 be the first with `!blitz2`!")
+        await ctx.send("No Blitz (Phone) scores yet \u2014 be the first with `!blitzp`!")
         return
-    lines = [f"**{i}.** {username} \u2014 {format_score('blitz2', score)}" for i, (username, score, _) in enumerate(rows, start=1)]
+    lines = [
+        f"**{i}.** {username} \u2014 {format_score(avg_score)} (avg of {games_counted})"
+        for i, (username, avg_score, games_counted) in enumerate(rows, start=1)
+    ]
     embed = discord.Embed(
-        title="🌍 Blitz2 All-Time Leaderboard",
-        description="\n".join(lines),
-        color=discord.Color.blue(),
-    )
-    await ctx.send(embed=embed)
-
-
-@bot.command(name="blitzboard2p")
-async def blitzboard2p(ctx: commands.Context):
-    rows = await get_leaderboard("blitz2p")
-    if not rows:
-        await ctx.send("No Blitz2 (Phone) scores yet \u2014 be the first with `!b2p`!")
-        return
-    lines = [f"**{i}.** {username} \u2014 {format_score('blitz2p', score)}" for i, (username, score, _) in enumerate(rows, start=1)]
-    embed = discord.Embed(
-        title="🌍 Blitz2 (Phone) All-Time Leaderboard",
+        title="🌍 Blitz (Phone) Leaderboard \u2014 Rolling Average",
         description="\n".join(lines),
         color=discord.Color.blue(),
     )
