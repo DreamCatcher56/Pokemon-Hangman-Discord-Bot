@@ -237,20 +237,6 @@ def _init_db_sync():
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_blitz_mode_score ON blitz_scores(mode, score)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_blitz_mode_user ON blitz_scores(mode, user_id)")
-
-        # Lifetime personal stats (words solved + games fully completed by mode).
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS user_stats (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT NOT NULL,
-                total_words_solved INTEGER NOT NULL DEFAULT 0,
-                games_completed_hangman INTEGER NOT NULL DEFAULT 0,
-                games_completed_blitz INTEGER NOT NULL DEFAULT 0,
-                games_completed_blitzp INTEGER NOT NULL DEFAULT 0
-            )
-            """
-        )
         conn.commit()
     finally:
         conn.close()
@@ -365,96 +351,6 @@ def _get_average_leaderboard_sync(mode: str, limit: int) -> list[tuple[str, floa
 
 async def get_average_leaderboard(mode: str, limit: int = LEADERBOARD_SIZE) -> list[tuple[str, float, int]]:
     return await asyncio.to_thread(_get_average_leaderboard_sync, mode, limit)
-
-
-# ---------------------------------------------------------------------------
-# Lifetime personal stats (words solved + games completed)
-# ---------------------------------------------------------------------------
-
-def _ensure_user_stats_row(conn: sqlite3.Connection, user_id: int, username: str):
-    conn.execute(
-        """
-        INSERT INTO user_stats (user_id, username, total_words_solved,
-                                games_completed_hangman, games_completed_blitz, games_completed_blitzp)
-        VALUES (?, ?, 0, 0, 0, 0)
-        ON CONFLICT(user_id) DO UPDATE SET username = excluded.username
-        """,
-        (user_id, username),
-    )
-
-
-def _increment_words_solved_sync(user_id: int, username: str, count: int = 1):
-    conn = _get_connection()
-    try:
-        _ensure_user_stats_row(conn, user_id, username)
-        conn.execute(
-            "UPDATE user_stats SET total_words_solved = total_words_solved + ?, username = ? WHERE user_id = ?",
-            (count, username, user_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-async def increment_words_solved(user_id: int, username: str, count: int = 1):
-    """Adds to a player's lifetime correct-word total. Called whenever that
-    player is the one who solves a word (regular hangman or blitz), including
-    words solved before an early cancel."""
-    await asyncio.to_thread(_increment_words_solved_sync, user_id, username, count)
-
-
-def _increment_games_completed_sync(user_id: int, username: str, mode: str):
-    """mode is one of: 'hangman', 'blitz', 'blitzp'."""
-    column = {
-        "hangman": "games_completed_hangman",
-        "blitz": "games_completed_blitz",
-        "blitzp": "games_completed_blitzp",
-    }.get(mode)
-    if column is None:
-        raise ValueError(f"Unknown games-completed mode: {mode!r}")
-    conn = _get_connection()
-    try:
-        _ensure_user_stats_row(conn, user_id, username)
-        conn.execute(
-            f"UPDATE user_stats SET {column} = {column} + 1, username = ? WHERE user_id = ?",
-            (username, user_id),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-async def increment_games_completed(user_id: int, username: str, mode: str):
-    """Increments the fully-completed game counter for a mode. Only call this
-    when a game actually finishes all its rounds/words (not on cancel/penalty)."""
-    await asyncio.to_thread(_increment_games_completed_sync, user_id, username, mode)
-
-
-def _get_user_stats_sync(user_id: int) -> dict | None:
-    conn = _get_connection()
-    try:
-        row = conn.execute(
-            """
-            SELECT total_words_solved, games_completed_hangman,
-                   games_completed_blitz, games_completed_blitzp
-            FROM user_stats WHERE user_id = ?
-            """,
-            (user_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        return {
-            "total_words_solved": row[0],
-            "games_completed_hangman": row[1],
-            "games_completed_blitz": row[2],
-            "games_completed_blitzp": row[3],
-        }
-    finally:
-        conn.close()
-
-
-async def get_user_stats(user_id: int) -> dict | None:
-    return await asyncio.to_thread(_get_user_stats_sync, user_id)
 
 
 # ---------------------------------------------------------------------------
@@ -614,8 +510,6 @@ class HangmanGame:
         if self.round_start_time is not None:
             self.guess_durations.append(time.monotonic() - self.round_start_time)
         self.scores[author.id] += 1
-        # Lifetime word counter — counts even if the game is later cancelled.
-        await increment_words_solved(author.id, author.display_name)
         verb = "completed the word with the final letter" if completed_via_letter else "guessed the full answer"
         announce_text = (
             f"🎉 **{author.display_name}** {verb}: **{self.current_word}**! Point awarded. "
@@ -637,10 +531,6 @@ class HangmanGame:
     async def end_game(self, prior_announcement: str | None = None):
         self.active = False
         active_games.pop(self.channel.id, None)
-
-        # Fully completed regular hangman — count for every participant.
-        for player in self.players:
-            await increment_games_completed(player.id, player.display_name, "hangman")
 
         ranking = sorted(self.scores.items(), key=lambda x: x[1], reverse=True)
         lines = [f"{self.player_by_id(uid).display_name}: **{score}**" for uid, score in ranking]
@@ -787,8 +677,6 @@ class BlitzSpeedGame:
             cumulative = now - self.start_time
             self.word_times.append((self.current_word, elapsed_word, cumulative))
         self.correct_count += 1
-        # Lifetime word counter — counts even if the run is later cancelled.
-        await increment_words_solved(self.player.id, self.player.display_name)
         if self.correct_count >= self.words_to_guess:
             await self.end_game()
         else:
@@ -799,10 +687,6 @@ class BlitzSpeedGame:
         self.active = False
         active_blitz_games.pop(self.channel.id, None)
         elapsed = forced_score if forced_score is not None else (time.perf_counter() - self.start_time)
-
-        # Only fully finished runs (not penalty cancels) count as a completed game.
-        if not cancelled:
-            await increment_games_completed(self.player.id, self.player.display_name, self.mode)
 
         avg_score, games_counted, rank, recent_scores = await record_score(
             self.mode, self.player.id, self.player.display_name, elapsed
@@ -1098,9 +982,8 @@ async def blitz_phone_start(ctx: commands.Context):
 async def personal_bests(ctx: commands.Context):
     blitz_avg = await get_rolling_average("blitz", ctx.author.id)
     blitzp_avg = await get_rolling_average("blitzp", ctx.author.id)
-    stats = await get_user_stats(ctx.author.id)
 
-    def render_avg(result: tuple[float, int] | None, command_name: str) -> str:
+    def render(result: tuple[float, int] | None, command_name: str) -> str:
         if result is None:
             return f"No scores yet \u2014 try `!{command_name}`!"
         avg_score, games_counted = result
@@ -1111,31 +994,9 @@ async def personal_bests(ctx: commands.Context):
         )
         return f"{format_score(avg_score)} ({window_note})"
 
-    total_words = stats["total_words_solved"] if stats else 0
-    games_hangman = stats["games_completed_hangman"] if stats else 0
-    games_blitz = stats["games_completed_blitz"] if stats else 0
-    games_blitzp = stats["games_completed_blitzp"] if stats else 0
-
-    embed = discord.Embed(
-        title=f"🏅 {ctx.author.display_name}'s Stats",
-        color=discord.Color.purple(),
-    )
-    embed.add_field(
-        name="📝 Words Solved",
-        value=f"**{total_words}** correct word{'s' if total_words != 1 else ''} across all modes",
-        inline=False,
-    )
-    embed.add_field(
-        name="🎮 Games Completed",
-        value=(
-            f"Regular Hangman: **{games_hangman}**\n"
-            f"Blitz: **{games_blitz}**\n"
-            f"Blitz (Phone): **{games_blitzp}**"
-        ),
-        inline=False,
-    )
-    embed.add_field(name="⚡ Blitz Rolling Average", value=render_avg(blitz_avg, "blitz"), inline=False)
-    embed.add_field(name="📱 Blitz (Phone) Rolling Average", value=render_avg(blitzp_avg, "blitzp"), inline=False)
+    embed = discord.Embed(title=f"🏅 {ctx.author.display_name}'s Rolling Averages", color=discord.Color.purple())
+    embed.add_field(name="⚡ Blitz \u2014 Fastest 5 Words", value=render(blitz_avg, "blitz"), inline=False)
+    embed.add_field(name="📱 Blitz (Phone) \u2014 Fastest 5 Words", value=render(blitzp_avg, "blitzp"), inline=False)
     await ctx.send(embed=embed)
 
 
