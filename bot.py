@@ -26,6 +26,20 @@ except ImportError:
 # Config
 # ---------------------------------------------------------------------------
 
+DATA_FILES = {
+    "Pokémon": "data/pokemon.txt",
+    "Ability": "data/abilities.txt",
+    "Move": "data/moves.txt",
+    "Item": "data/items.txt",
+}
+
+# Same categories as regular hangman, except Items are pulled from a
+# separate curated list for the blitz modes.
+BLITZ_DATA_FILES = {
+    **DATA_FILES,
+    "Item": "data/blitzitems.txt",
+}
+
 DEFAULT_ROUNDS_PER_GAME = 7
 MIN_ROUNDS = 1
 MAX_ROUNDS = 20
