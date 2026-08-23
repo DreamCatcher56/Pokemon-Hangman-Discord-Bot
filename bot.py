@@ -353,6 +353,23 @@ async def get_average_leaderboard(mode: str, limit: int = LEADERBOARD_SIZE) -> l
     return await asyncio.to_thread(_get_average_leaderboard_sync, mode, limit)
 
 
+def _get_best_scores_sync(mode: str, user_id: int, limit: int = 5) -> list[float]:
+    """Returns the player's fastest scores for a mode, best (lowest) first."""
+    conn = _get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT score FROM blitz_scores WHERE mode = ? AND user_id = ? ORDER BY score ASC LIMIT ?",
+            (mode, user_id, limit),
+        ).fetchall()
+        return [row[0] for row in rows]
+    finally:
+        conn.close()
+
+
+async def get_best_scores(mode: str, user_id: int, limit: int = 5) -> list[float]:
+    return await asyncio.to_thread(_get_best_scores_sync, mode, user_id, limit)
+
+
 # ---------------------------------------------------------------------------
 # Join view (button-based lobby)
 # ---------------------------------------------------------------------------
@@ -982,8 +999,10 @@ async def blitz_phone_start(ctx: commands.Context):
 async def personal_bests(ctx: commands.Context):
     blitz_avg = await get_rolling_average("blitz", ctx.author.id)
     blitzp_avg = await get_rolling_average("blitzp", ctx.author.id)
+    blitz_best = await get_best_scores("blitz", ctx.author.id, limit=5)
+    blitzp_best = await get_best_scores("blitzp", ctx.author.id, limit=5)
 
-    def render(result: tuple[float, int] | None, command_name: str) -> str:
+    def render_avg(result: tuple[float, int] | None, command_name: str) -> str:
         if result is None:
             return f"No scores yet \u2014 try `!{command_name}`!"
         avg_score, games_counted = result
@@ -994,9 +1013,16 @@ async def personal_bests(ctx: commands.Context):
         )
         return f"{format_score(avg_score)} ({window_note})"
 
-    embed = discord.Embed(title=f"🏅 {ctx.author.display_name}'s Rolling Averages", color=discord.Color.purple())
-    embed.add_field(name="⚡ Blitz \u2014 Fastest 5 Words", value=render(blitz_avg, "blitz"), inline=False)
-    embed.add_field(name="📱 Blitz (Phone) \u2014 Fastest 5 Words", value=render(blitzp_avg, "blitzp"), inline=False)
+    def render_best(scores: list[float], command_name: str) -> str:
+        if not scores:
+            return f"No scores yet \u2014 try `!{command_name}`!"
+        return ", ".join(f"{s:.3f}s" for s in scores)
+
+    embed = discord.Embed(title=f"🏅 {ctx.author.display_name}'s Stats", color=discord.Color.purple())
+    embed.add_field(name="⚡ Blitz — Rolling Average", value=render_avg(blitz_avg, "blitz"), inline=False)
+    embed.add_field(name="⚡ Blitz — Best 5 Scores", value=render_best(blitz_best, "blitz"), inline=False)
+    embed.add_field(name="📱 Blitz (Phone) — Rolling Average", value=render_avg(blitzp_avg, "blitzp"), inline=False)
+    embed.add_field(name="📱 Blitz (Phone) — Best 5 Scores", value=render_best(blitzp_best, "blitzp"), inline=False)
     await ctx.send(embed=embed)
 
 
