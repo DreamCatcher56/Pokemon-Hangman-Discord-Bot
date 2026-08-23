@@ -48,6 +48,7 @@ ROUND_TIMEOUT_SECONDS = 100
 VOWELS = set("AEIOU")
 
 BLITZ_WORDS_TO_GUESS = 5
+BLITZ_IDLE_TIMEOUT_SECONDS = 45  # auto-penalty cancel if no guess for this long
 ROLLING_AVERAGE_WINDOW = 5  # skill metric = avg of a player's last N games, per mode
 LEADERBOARD_SIZE = 10
 
@@ -613,9 +614,37 @@ class BlitzSpeedGame:
         self._lock = asyncio.Lock()
         self.word_start_time: float | None = None
         self.word_times: list[tuple[str, float, float]] = []
+        self._idle_task: asyncio.Task | None = None
+
+    def _reset_idle_timeout(self):
+        """(Re)start the AFK timer. Any valid guess activity should call this."""
+        if self._idle_task and not self._idle_task.done():
+            self._idle_task.cancel()
+        if self.active:
+            self._idle_task = asyncio.create_task(self._idle_timeout())
+
+    def _cancel_idle_timeout(self):
+        if self._idle_task and not self._idle_task.done():
+            self._idle_task.cancel()
+        self._idle_task = None
+
+    async def _idle_timeout(self):
+        try:
+            await asyncio.sleep(BLITZ_IDLE_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            return
+        async with self._lock:
+            if not self.active:
+                return
+            # Same penalty formula as a mid-run player cancel.
+            elapsed_so_far = (time.perf_counter() - self.start_time) if self.start_time is not None else 0.0
+            words_remaining = self.words_to_guess - self.correct_count
+            penalty_score = elapsed_so_far + (words_remaining * 30.0)
+            await self.end_game(forced_score=penalty_score, cancelled=True, idle=True)
 
     async def start(self):
         self.start_time = time.perf_counter()
+        self._reset_idle_timeout()
         await self._next_word()
 
     def _prepare_next_word(self) -> discord.Embed:
@@ -656,6 +685,8 @@ class BlitzSpeedGame:
         async with self._lock:
             if not self.active:
                 return
+            # Any valid guess attempt counts as activity and resets the AFK timer.
+            self._reset_idle_timeout()
             if len(content) == 1:
                 await self._handle_letter_guess(message, content.upper())
             else:
@@ -700,8 +731,9 @@ class BlitzSpeedGame:
             announce_text = f"🎉 **{self.current_word}**! {self.correct_count}/{self.words_to_guess} done."
             await self._next_word(prior_announcement=announce_text)
 
-    async def end_game(self, forced_score: float | None = None, cancelled: bool = False):
+    async def end_game(self, forced_score: float | None = None, cancelled: bool = False, idle: bool = False):
         self.active = False
+        self._cancel_idle_timeout()
         active_blitz_games.pop(self.channel.id, None)
         elapsed = forced_score if forced_score is not None else (time.perf_counter() - self.start_time)
 
@@ -718,15 +750,21 @@ class BlitzSpeedGame:
         scores_display = ", ".join(f"{s:.3f}s" for s in recent_scores)
 
         if cancelled:
-            embed = discord.Embed(
-                title="🛑 Speed Blitz Cancelled (Penalty Applied)",
-                description=(
+            if idle:
+                title = "🛑 Speed Blitz Timed Out (Penalty Applied)"
+                reason = (
+                    f"**{self.player.display_name}** went inactive for {BLITZ_IDLE_TIMEOUT_SECONDS}s. "
+                    f"Penalty score recorded: **{elapsed:.3f}s** "
+                    f"(time so far + {self.words_to_guess - self.correct_count} remaining word(s) × 30s)."
+                )
+            else:
+                title = "🛑 Speed Blitz Cancelled (Penalty Applied)"
+                reason = (
                     f"**{self.player.display_name}** stopped the round early. "
                     f"Penalty score recorded: **{elapsed:.3f}s** "
                     f"(time so far + {self.words_to_guess - self.correct_count} remaining word(s) × 30s)."
-                ),
-                color=discord.Color.red(),
-            )
+                )
+            embed = discord.Embed(title=title, description=reason, color=discord.Color.red())
         else:
             embed = discord.Embed(
                 title="🏁 Speed Blitz Complete!",
@@ -776,6 +814,7 @@ class BlitzSpeedGame:
 
         # Clean cancel (moderator, or starter within grace window)
         self.active = False
+        self._cancel_idle_timeout()
         active_blitz_games.pop(self.channel.id, None)
         if in_grace:
             await self.channel.send(
