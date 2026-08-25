@@ -47,6 +47,17 @@ JOIN_WINDOW_SECONDS = 12
 ROUND_TIMEOUT_SECONDS = 100
 VOWELS = set("AEIOU")
 
+# Time penalty (in seconds) added to a Blitz player's score for each
+# *incorrect single-letter* guess. Rarer letters cost less since a wrong
+# guess on them is less "avoidable" - guessing common letters wrong is
+# what this is meant to discourage blind-spamming.
+BLITZ_LETTER_PENALTIES: dict[str, float] = {
+    **{letter: 4.0 for letter in "AEIOU"},
+    **{letter: 3.0 for letter in "RSTLNP"},
+    **{letter: 1.5 for letter in "DCHMGBF"},
+    **{letter: 0.5 for letter in "WYKVJXQZ"},
+}
+
 BLITZ_WORDS_TO_GUESS = 5
 BLITZ_IDLE_TIMEOUT_SECONDS = 45  # auto-penalty cancel if no guess for this long
 ROLLING_AVERAGE_WINDOW = 5  # skill metric = avg of a player's last N games, per mode
@@ -588,6 +599,23 @@ class HangmanGame:
 # Blitz solo game modes
 # ---------------------------------------------------------------------------
 
+def pick_blitz_starting_letters(word: str) -> set[str]:
+    """Reveals exactly one random vowel and one random consonant that
+    actually appear in the word (instead of all vowels), so the free
+    starting info isn't the same predictable set every round. Falls back
+    gracefully if the word happens to have no vowels or no consonants."""
+    letters_in_word = {ch.upper() for ch in word if ch.isalpha()}
+    vowels_present = letters_in_word & VOWELS
+    consonants_present = letters_in_word - VOWELS
+
+    starting: set[str] = set()
+    if vowels_present:
+        starting.add(random.choice(list(vowels_present)))
+    if consonants_present:
+        starting.add(random.choice(list(consonants_present)))
+    return starting
+
+
 class BlitzSpeedGame:
     """!blitz / !blitzp - guess a fixed number of words as fast as possible, timed to the millisecond."""
 
@@ -615,6 +643,11 @@ class BlitzSpeedGame:
         self.word_start_time: float | None = None
         self.word_times: list[tuple[str, float, float]] = []
         self._idle_task: asyncio.Task | None = None
+        # Wrong single-letter guesses add time here, per BLITZ_LETTER_PENALTIES.
+        # current_word_penalty resets each word; total_penalty accumulates
+        # across the whole run and is folded into the final score.
+        self.current_word_penalty: float = 0.0
+        self.total_penalty: float = 0.0
 
     def _reset_idle_timeout(self):
         """(Re)start the AFK timer. Any valid guess activity should call this."""
@@ -639,7 +672,7 @@ class BlitzSpeedGame:
             # Same penalty formula as a mid-run player cancel.
             elapsed_so_far = (time.perf_counter() - self.start_time) if self.start_time is not None else 0.0
             words_remaining = self.words_to_guess - self.correct_count
-            penalty_score = elapsed_so_far + (words_remaining * 30.0)
+            penalty_score = elapsed_so_far + self.total_penalty + (words_remaining * 30.0)
             await self.end_game(forced_score=penalty_score, cancelled=True, idle=True)
 
     async def start(self):
@@ -652,9 +685,10 @@ class BlitzSpeedGame:
         without sending it. Kept separate from the send so callers can
         guarantee a preceding "word complete" message is fully sent first."""
         self.current_category, self.current_word = pick_word(self.word_lists)
-        self.guessed_letters = set(VOWELS)
+        self.guessed_letters = pick_blitz_starting_letters(self.current_word)
         self.wrong_letters = set()
         self.word_start_time = time.perf_counter()
+        self.current_word_penalty = 0.0
 
         embed = discord.Embed(
             title=f"⚡ Speed Blitz! Word {self.correct_count + 1} of {self.words_to_guess}",
@@ -662,7 +696,10 @@ class BlitzSpeedGame:
             color=discord.Color.orange(),
         )
         embed.add_field(name="\u200b", value=format_wrong_letters(self.wrong_letters), inline=False)
-        embed.set_footer(text="Vowels are pre-filled. Type a letter or the full answer. Clock is running!")
+        embed.set_footer(
+            text="One vowel + one consonant revealed to start. Wrong single-letter guesses cost time "
+            "(common letters cost more). Clock is running!"
+        )
         return embed
 
     async def _next_word(self, prior_announcement: str | None = None):
@@ -693,11 +730,8 @@ class BlitzSpeedGame:
                 await self._handle_word_guess(message, content)
 
     async def _handle_letter_guess(self, message: discord.Message, letter: str):
-        if letter in VOWELS:
-            fire_and_forget(self.channel.send(f"Vowels are already revealed \u2014 `{render_word(self.current_word, self.guessed_letters)}`"))
-            return
         if letter in self.guessed_letters:
-            return
+            return  # already revealed (starting letter or previously guessed) - no penalty
         self.guessed_letters.add(letter)
 
         if letter in self.current_word.upper():
@@ -709,7 +743,13 @@ class BlitzSpeedGame:
                 await self._word_complete()
         else:
             self.wrong_letters.add(letter)
-            fire_and_forget(message.add_reaction("❌"))
+            penalty = BLITZ_LETTER_PENALTIES.get(letter, 0.0)
+            self.current_word_penalty += penalty
+            self.total_penalty += penalty
+            fire_and_forget(self.channel.send(
+                f"❌ `{letter}` isn't in it \u2014 +{penalty:.1f}s penalty\n"
+                f"{format_wrong_letters(self.wrong_letters)}"
+            ))
 
     async def _handle_word_guess(self, message: discord.Message, guess: str):
         if guess.upper() == self.current_word.upper():
@@ -721,8 +761,8 @@ class BlitzSpeedGame:
     async def _word_complete(self):
         if self.word_start_time is not None:
             now = time.perf_counter()
-            elapsed_word = now - self.word_start_time
-            cumulative = now - self.start_time
+            elapsed_word = (now - self.word_start_time) + self.current_word_penalty
+            cumulative = (now - self.start_time) + self.total_penalty
             self.word_times.append((self.current_word, elapsed_word, cumulative))
         self.correct_count += 1
         if self.correct_count >= self.words_to_guess:
@@ -735,7 +775,9 @@ class BlitzSpeedGame:
         self.active = False
         self._cancel_idle_timeout()
         active_blitz_games.pop(self.channel.id, None)
-        elapsed = forced_score if forced_score is not None else (time.perf_counter() - self.start_time)
+        elapsed = forced_score if forced_score is not None else (
+            (time.perf_counter() - self.start_time) + self.total_penalty
+        )
 
         avg_score, games_counted, rank, recent_scores = await record_score(
             self.mode, self.player.id, self.player.display_name, elapsed
@@ -755,14 +797,16 @@ class BlitzSpeedGame:
                 reason = (
                     f"**{self.player.display_name}** went inactive for {BLITZ_IDLE_TIMEOUT_SECONDS}s. "
                     f"Penalty score recorded: **{elapsed:.3f}s** "
-                    f"(time so far + {self.words_to_guess - self.correct_count} remaining word(s) × 30s)."
+                    f"(time so far + {self.total_penalty:.1f}s in letter penalties + "
+                    f"{self.words_to_guess - self.correct_count} remaining word(s) × 30s)."
                 )
             else:
                 title = "🛑 Speed Blitz Cancelled (Penalty Applied)"
                 reason = (
                     f"**{self.player.display_name}** stopped the round early. "
                     f"Penalty score recorded: **{elapsed:.3f}s** "
-                    f"(time so far + {self.words_to_guess - self.correct_count} remaining word(s) × 30s)."
+                    f"(time so far + {self.total_penalty:.1f}s in letter penalties + "
+                    f"{self.words_to_guess - self.correct_count} remaining word(s) × 30s)."
                 )
             embed = discord.Embed(title=title, description=reason, color=discord.Color.red())
         else:
@@ -775,6 +819,8 @@ class BlitzSpeedGame:
                 color=discord.Color.gold(),
             )
             embed.add_field(name="This Game", value=f"{elapsed:.3f} seconds")
+            if self.total_penalty > 0:
+                embed.add_field(name="Penalty Time", value=f"+{self.total_penalty:.1f}s from wrong letter guesses")
             for name, value in build_time_interval_fields(self.word_times):
                 embed.add_field(name=name, value=value, inline=False)
 
@@ -807,8 +853,8 @@ class BlitzSpeedGame:
         )
 
         if is_starter and not in_grace:
-            # Penalty: time elapsed so far + (words remaining) × 30s
-            penalty_score = elapsed_so_far + (words_remaining * 30.0)
+            # Penalty: time elapsed so far + accumulated letter penalties + (words remaining) × 30s
+            penalty_score = elapsed_so_far + self.total_penalty + (words_remaining * 30.0)
             await self.end_game(forced_score=penalty_score, cancelled=True)
             return
 
