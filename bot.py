@@ -11,6 +11,7 @@ import random
 import asyncio
 import time
 import sqlite3
+from collections import Counter
 from datetime import datetime, timezone
 
 import discord
@@ -46,6 +47,7 @@ MAX_ROUNDS = 20
 JOIN_WINDOW_SECONDS = 12
 ROUND_TIMEOUT_SECONDS = 100
 VOWELS = set("AEIOU")
+CONSONANTS = set("BCDFGHJKLMNPQRSTVWXYZ")
 
 # Time penalty (in seconds) added to a Blitz player's score for each
 # *incorrect single-letter* guess. Rarer letters cost less since a wrong
@@ -680,6 +682,22 @@ class HangmanGame:
 BLITZ_SHORT_WORD_LETTER_THRESHOLD = 5
 
 
+def _least_frequent_letters(letter_counts: Counter, candidate_pool: set[str]) -> list[str]:
+    """Given a Counter of letter -> occurrence count for a word, and a pool
+    of letters to consider (e.g. VOWELS or the consonants), returns the
+    letters from that pool that are present in the word and tied for the
+    FEWEST occurrences. A letter that repeats more than others in the same
+    pool is excluded, so the free reveal never lands on the word's most
+    "obvious" letter. If every present letter in the pool ties (including
+    the case where only one distinct letter from the pool appears at all),
+    all of them are returned."""
+    present_counts = {letter: count for letter, count in letter_counts.items() if letter in candidate_pool}
+    if not present_counts:
+        return []
+    min_count = min(present_counts.values())
+    return [letter for letter, count in present_counts.items() if count == min_count]
+
+
 def pick_blitz_starting_letters(word: str) -> set[str]:
     """Reveals starting letters for a Blitz word. For words with more than
     BLITZ_SHORT_WORD_LETTER_THRESHOLD letters, reveals one random vowel and
@@ -687,29 +705,42 @@ def pick_blitz_starting_letters(word: str) -> set[str]:
     vowels), so the free starting info isn't the same predictable set every
     round. For words at or under that threshold, reveals only a single
     random consonant (no vowel) to raise the difficulty on short words.
+
+    In both cases, the letter is chosen only from among the least-frequently
+    -occurring letters in its category (vowel or consonant) within the word:
+    a letter that repeats more than other vowels/consonants in the same word
+    is never revealed, since that would give away more "for free" than a
+    letter that only appears once. If every candidate ties on occurrence
+    count (including words with no repeats at all, or where only one
+    distinct vowel/consonant appears), the choice is random among them same
+    as before.
+
     Falls back gracefully if the word happens to have no vowels or no
     consonants. Since guessed_letters is a set of letters (not positions),
     every occurrence of the revealed letter is displayed automatically."""
-    letters_in_word = {ch.upper() for ch in word if ch.isalpha()}
-    letter_count = sum(1 for ch in word if ch.isalpha())
-    vowels_present = letters_in_word & VOWELS
-    consonants_present = letters_in_word - VOWELS
+    letter_counts = Counter(ch.upper() for ch in word if ch.isalpha())
+    letter_count = sum(letter_counts.values())
 
     starting: set[str] = set()
     is_short_word = letter_count <= BLITZ_SHORT_WORD_LETTER_THRESHOLD
 
     if is_short_word:
-        if consonants_present:
-            starting.add(random.choice(list(consonants_present)))
-        elif vowels_present:
+        consonant_candidates = _least_frequent_letters(letter_counts, CONSONANTS)
+        if consonant_candidates:
+            starting.add(random.choice(consonant_candidates))
+        else:
             # No consonants at all (e.g. a word made entirely of vowels) -
-            # fall back to a vowel so something is still revealed.
-            starting.add(random.choice(list(vowels_present)))
+            # fall back to a least-frequent vowel so something is revealed.
+            vowel_candidates = _least_frequent_letters(letter_counts, VOWELS)
+            if vowel_candidates:
+                starting.add(random.choice(vowel_candidates))
     else:
-        if vowels_present:
-            starting.add(random.choice(list(vowels_present)))
-        if consonants_present:
-            starting.add(random.choice(list(consonants_present)))
+        vowel_candidates = _least_frequent_letters(letter_counts, VOWELS)
+        if vowel_candidates:
+            starting.add(random.choice(vowel_candidates))
+        consonant_candidates = _least_frequent_letters(letter_counts, CONSONANTS)
+        if consonant_candidates:
+            starting.add(random.choice(consonant_candidates))
     return starting
 
 
