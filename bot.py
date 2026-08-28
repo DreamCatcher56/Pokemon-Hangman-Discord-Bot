@@ -51,11 +51,29 @@ VOWELS = set("AEIOU")
 # *incorrect single-letter* guess. Rarer letters cost less since a wrong
 # guess on them is less "avoidable" - guessing common letters wrong is
 # what this is meant to discourage blind-spamming.
+#
+# Tier 1 - 4.0s - E, A, R, O, I
+# Tier 2 - 3.0s - T, L, S, C, N
+# Tier 3 - 2.0s - M, D, U, P, G, K, H, B
+# Tier 4 - 1.0s - Y, F, V, W, Z, X, J, Q
+BLITZ_TIER_BASE_PENALTY: dict[int, float] = {
+    1: 4.0,
+    2: 3.0,
+    3: 2.0,
+    4: 1.0,
+}
+
+BLITZ_LETTER_TIER: dict[str, int] = {
+    **{letter: 1 for letter in "EAROI"},
+    **{letter: 2 for letter in "TLSCN"},
+    **{letter: 3 for letter in "MDUPGKHB"},
+    **{letter: 4 for letter in "YFVWZXJQ"},
+}
+
+# Base penalty per letter, kept for anything that just wants the flat
+# first-guess cost (e.g. display text) without the escalation logic.
 BLITZ_LETTER_PENALTIES: dict[str, float] = {
-    **{letter: 4.0 for letter in "AEIOU"},
-    **{letter: 3.0 for letter in "RSTLNP"},
-    **{letter: 1.5 for letter in "DCHMGBF"},
-    **{letter: 0.5 for letter in "WYKVJXQZ"},
+    letter: BLITZ_TIER_BASE_PENALTY[tier] for letter, tier in BLITZ_LETTER_TIER.items()
 }
 
 BLITZ_WORDS_TO_GUESS = 5
@@ -406,6 +424,62 @@ class JoinView(discord.ui.View):
             item.disabled = True
 
 
+BLITZ_DIFFICULTY_SELECT_TIMEOUT_SECONDS = 20
+
+
+class BlitzDifficultyView(discord.ui.View):
+    """Shown when !blitz / !blitzp is invoked so the player can pick Easy
+    or Hard mode before the round starts. Only the player who ran the
+    command can make the selection. Defaults to Hard mode if the player
+    doesn't pick anything before the view times out."""
+
+    def __init__(self, player: discord.Member, timeout: int = BLITZ_DIFFICULTY_SELECT_TIMEOUT_SECONDS):
+        super().__init__(timeout=timeout)
+        self.player = player
+        self.difficulty: str = "hard"
+        self.message: discord.Message | None = None
+        self._decided = asyncio.Event()
+
+    async def _choose(self, interaction: discord.Interaction, difficulty: str, label: str):
+        if interaction.user.id != self.player.id:
+            await interaction.response.send_message(
+                "Only the player who ran the command can pick the mode.", ephemeral=True
+            )
+            return
+        self.difficulty = difficulty
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(
+            content=f"Mode selected: **{label}**. Starting your Speed Blitz...", view=self
+        )
+        self._decided.set()
+        self.stop()
+
+    @discord.ui.button(label="Easy Mode", style=discord.ButtonStyle.green, emoji="🌱")
+    async def easy(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._choose(interaction, "easy", "🌱 Easy")
+
+    @discord.ui.button(label="Hard Mode", style=discord.ButtonStyle.red, emoji="🔥")
+    async def hard(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._choose(interaction, "hard", "🔥 Hard")
+
+    async def on_timeout(self):
+        if self._decided.is_set():
+            return
+        for item in self.children:
+            item.disabled = True
+        # No selection in time - default to Hard mode (the recorded, ranked
+        # ruleset) rather than silently leaving the player without a game.
+        if self.message is not None:
+            try:
+                await self.message.edit(
+                    content="No mode selected in time \u2014 defaulting to **🔥 Hard** mode. Starting your Speed Blitz...",
+                    view=self,
+                )
+            except discord.HTTPException:
+                pass
+
+
 # ---------------------------------------------------------------------------
 # Game logic
 # ---------------------------------------------------------------------------
@@ -599,21 +673,50 @@ class HangmanGame:
 # Blitz solo game modes
 # ---------------------------------------------------------------------------
 
+# Words with this many letters (or fewer) are considered "short" for the
+# purposes of the Blitz starting reveal - short words only get a single
+# random consonant revealed instead of a vowel + consonant, since a vowel
+# alone already gives away a lot of a short word.
+BLITZ_SHORT_WORD_LETTER_THRESHOLD = 5
+
+
 def pick_blitz_starting_letters(word: str) -> set[str]:
-    """Reveals exactly one random vowel and one random consonant that
-    actually appear in the word (instead of all vowels), so the free
-    starting info isn't the same predictable set every round. Falls back
-    gracefully if the word happens to have no vowels or no consonants."""
+    """Reveals starting letters for a Blitz word. For words with more than
+    BLITZ_SHORT_WORD_LETTER_THRESHOLD letters, reveals one random vowel and
+    one random consonant that actually appear in the word (instead of all
+    vowels), so the free starting info isn't the same predictable set every
+    round. For words at or under that threshold, reveals only a single
+    random consonant (no vowel) to raise the difficulty on short words.
+    Falls back gracefully if the word happens to have no vowels or no
+    consonants. Since guessed_letters is a set of letters (not positions),
+    every occurrence of the revealed letter is displayed automatically."""
     letters_in_word = {ch.upper() for ch in word if ch.isalpha()}
+    letter_count = sum(1 for ch in word if ch.isalpha())
     vowels_present = letters_in_word & VOWELS
     consonants_present = letters_in_word - VOWELS
 
     starting: set[str] = set()
-    if vowels_present:
-        starting.add(random.choice(list(vowels_present)))
-    if consonants_present:
-        starting.add(random.choice(list(consonants_present)))
+    is_short_word = letter_count <= BLITZ_SHORT_WORD_LETTER_THRESHOLD
+
+    if is_short_word:
+        if consonants_present:
+            starting.add(random.choice(list(consonants_present)))
+        elif vowels_present:
+            # No consonants at all (e.g. a word made entirely of vowels) -
+            # fall back to a vowel so something is still revealed.
+            starting.add(random.choice(list(vowels_present)))
+    else:
+        if vowels_present:
+            starting.add(random.choice(list(vowels_present)))
+        if consonants_present:
+            starting.add(random.choice(list(consonants_present)))
     return starting
+
+
+def pick_easy_blitz_starting_letters(word: str) -> set[str]:
+    """Easy-mode reveal: every vowel that appears in the word is
+    pre-revealed (not just one), matching the original simpler Blitz mode."""
+    return {ch.upper() for ch in word if ch.isalpha() and ch.upper() in VOWELS}
 
 
 class BlitzSpeedGame:
@@ -626,12 +729,19 @@ class BlitzSpeedGame:
         word_lists,
         words_to_guess: int = BLITZ_WORDS_TO_GUESS,
         mode: str = "blitz",
+        difficulty: str = "hard",
     ):
         self.channel = channel
         self.player = player
         self.word_lists = word_lists
         self.words_to_guess = words_to_guess
         self.mode = mode  # "blitz" or "blitzp" - which leaderboard/rolling average this run counts toward
+        # "easy" or "hard". Easy: all vowels pre-revealed, unlimited free
+        # letter guesses (no time penalty), and the run is never saved to
+        # the leaderboard/rolling average. Hard: the full current ruleset
+        # (short-word single-consonant reveal, tiered escalating penalties)
+        # and results are recorded as normal.
+        self.difficulty = difficulty
         self.current_word = ""
         self.current_category = ""
         self.guessed_letters: set[str] = set()
@@ -643,11 +753,17 @@ class BlitzSpeedGame:
         self.word_start_time: float | None = None
         self.word_times: list[tuple[str, float, float]] = []
         self._idle_task: asyncio.Task | None = None
-        # Wrong single-letter guesses add time here, per BLITZ_LETTER_PENALTIES.
-        # current_word_penalty resets each word; total_penalty accumulates
-        # across the whole run and is folded into the final score.
+        # Wrong single-letter guesses add time here, per BLITZ_LETTER_TIER /
+        # BLITZ_TIER_BASE_PENALTY. current_word_penalty resets each word;
+        # total_penalty accumulates across the whole run and is folded into
+        # the final score.
         self.current_word_penalty: float = 0.0
         self.total_penalty: float = 0.0
+        # Tracks how many wrong guesses have landed in each penalty tier
+        # *this round* (word). Each additional wrong guess within the same
+        # tier in the same round costs 50% more than the last, to punish
+        # spam-guessing a tier for max info. Resets every new word.
+        self.tier_wrong_counts: dict[int, int] = {}
 
     def _reset_idle_timeout(self):
         """(Re)start the AFK timer. Any valid guess activity should call this."""
@@ -685,21 +801,38 @@ class BlitzSpeedGame:
         without sending it. Kept separate from the send so callers can
         guarantee a preceding "word complete" message is fully sent first."""
         self.current_category, self.current_word = pick_word(self.word_lists)
-        self.guessed_letters = pick_blitz_starting_letters(self.current_word)
+        if self.difficulty == "easy":
+            self.guessed_letters = pick_easy_blitz_starting_letters(self.current_word)
+        else:
+            self.guessed_letters = pick_blitz_starting_letters(self.current_word)
         self.wrong_letters = set()
         self.word_start_time = time.perf_counter()
         self.current_word_penalty = 0.0
+        self.tier_wrong_counts = {}
 
         embed = discord.Embed(
-            title=f"⚡ Speed Blitz! Word {self.correct_count + 1} of {self.words_to_guess}",
+            title=f"⚡ Speed Blitz ({'Easy' if self.difficulty == 'easy' else 'Hard'})! "
+            f"Word {self.correct_count + 1} of {self.words_to_guess}",
             description=f"Category: **{self.current_category}**\n\n`{render_word(self.current_word, self.guessed_letters)}`",
             color=discord.Color.orange(),
         )
         embed.add_field(name="\u200b", value=format_wrong_letters(self.wrong_letters), inline=False)
-        embed.set_footer(
-            text="One vowel + one consonant revealed to start. Wrong single-letter guesses cost time "
-            "(common letters cost more). Clock is running!"
-        )
+        if self.difficulty == "easy":
+            footer_text = (
+                "🌱 Easy Mode — all vowels revealed to start. Guess as many letters as you want, "
+                "no time penalty. (Not saved to the leaderboard.) Clock is running!"
+            )
+        else:
+            letter_count = sum(1 for ch in self.current_word if ch.isalpha())
+            if letter_count <= BLITZ_SHORT_WORD_LETTER_THRESHOLD:
+                reveal_note = "One random consonant revealed to start (short word)."
+            else:
+                reveal_note = "One vowel + one consonant revealed to start."
+            footer_text = (
+                f"{reveal_note} Wrong single-letter guesses cost time (common letters cost more), "
+                "and repeat wrong guesses in the same letter tier cost 50% more each time. Clock is running!"
+            )
+        embed.set_footer(text=footer_text)
         return embed
 
     async def _next_word(self, prior_announcement: str | None = None):
@@ -743,12 +876,27 @@ class BlitzSpeedGame:
                 await self._word_complete()
         else:
             self.wrong_letters.add(letter)
-            penalty = BLITZ_LETTER_PENALTIES.get(letter, 0.0)
+            if self.difficulty == "easy":
+                penalty = 0.0
+            else:
+                tier = BLITZ_LETTER_TIER.get(letter)
+                if tier is not None:
+                    base_penalty = BLITZ_TIER_BASE_PENALTY[tier]
+                    prior_wrong_in_tier = self.tier_wrong_counts.get(tier, 0)
+                    # Each prior wrong guess in this tier this round adds
+                    # another 50% of the base penalty on top.
+                    penalty = base_penalty * (1 + 0.5 * prior_wrong_in_tier)
+                    self.tier_wrong_counts[tier] = prior_wrong_in_tier + 1
+                else:
+                    penalty = 0.0
             self.current_word_penalty += penalty
             self.total_penalty += penalty
+            if self.difficulty == "easy":
+                feedback = f"❌ `{letter}` isn't in it \u2014 no penalty (easy mode)\n"
+            else:
+                feedback = f"❌ `{letter}` isn't in it \u2014 +{penalty:.1f}s penalty\n"
             fire_and_forget(self.channel.send(
-                f"❌ `{letter}` isn't in it \u2014 +{penalty:.1f}s penalty\n"
-                f"{format_wrong_letters(self.wrong_letters)}"
+                feedback + format_wrong_letters(self.wrong_letters)
             ))
 
     async def _handle_word_guess(self, message: discord.Message, guess: str):
@@ -779,17 +927,18 @@ class BlitzSpeedGame:
             (time.perf_counter() - self.start_time) + self.total_penalty
         )
 
-        avg_score, games_counted, rank, recent_scores = await record_score(
-            self.mode, self.player.id, self.player.display_name, elapsed
-        )
-        window_note = (
-            f"last {games_counted} game{'s' if games_counted != 1 else ''}"
-            if games_counted < ROLLING_AVERAGE_WINDOW
-            else f"last {ROLLING_AVERAGE_WINDOW} games"
-        )
-
-        # recent_scores is newest-first (ORDER BY id DESC); keep that order
-        scores_display = ", ".join(f"{s:.3f}s" for s in recent_scores)
+        is_hard = self.difficulty == "hard"
+        if is_hard:
+            avg_score, games_counted, rank, recent_scores = await record_score(
+                self.mode, self.player.id, self.player.display_name, elapsed
+            )
+            window_note = (
+                f"last {games_counted} game{'s' if games_counted != 1 else ''}"
+                if games_counted < ROLLING_AVERAGE_WINDOW
+                else f"last {ROLLING_AVERAGE_WINDOW} games"
+            )
+            # recent_scores is newest-first (ORDER BY id DESC); keep that order
+            scores_display = ", ".join(f"{s:.3f}s" for s in recent_scores)
 
         if cancelled:
             if idle:
@@ -824,17 +973,25 @@ class BlitzSpeedGame:
             for name, value in build_time_interval_fields(self.word_times):
                 embed.add_field(name=name, value=value, inline=False)
 
-        embed.add_field(name="Rolling Average", value=f"{format_score(avg_score)} ({window_note})")
-        embed.add_field(
-            name=f"Last {games_counted} Score{'s' if games_counted != 1 else ''}",
-            value=scores_display or "—",
-            inline=False,
-        )
-        embed.add_field(
-            name="\u200b",
-            value=f"🌍 You're currently #{rank} on the leaderboard! (`!lb` to view)",
-            inline=False,
-        )
+        if is_hard:
+            embed.add_field(name="Rolling Average", value=f"{format_score(avg_score)} ({window_note})")
+            embed.add_field(
+                name=f"Last {games_counted} Score{'s' if games_counted != 1 else ''}",
+                value=scores_display or "—",
+                inline=False,
+            )
+            embed.add_field(
+                name="\u200b",
+                value=f"🌍 You're currently #{rank} on the leaderboard! (`!lb` to view)",
+                inline=False,
+            )
+        else:
+            embed.add_field(
+                name="\u200b",
+                value="🌱 Easy Mode — this score isn't saved to the leaderboard or your rolling average. "
+                "Play `!blitz` or `!blitzp` in Hard mode for that to count!",
+                inline=False,
+            )
         await self.channel.send(embed=embed)
 
     async def cancel(self, cancelled_by: discord.Member):
@@ -1037,6 +1194,24 @@ async def hangman_stop(ctx: commands.Context):
     await ctx.send("There's no game running in this channel.")
 
 
+async def _prompt_blitz_difficulty(ctx: commands.Context) -> str:
+    """Sends the Easy/Hard mode picker and waits for the player's choice
+    (defaults to "hard" if the view times out with no click). Returns
+    "easy" or "hard"."""
+    view = BlitzDifficultyView(player=ctx.author)
+    msg = await ctx.send(
+        f"**{ctx.author.display_name}**, pick your Speed Blitz mode:\n"
+        f"🌱 **Easy** \u2014 all vowels revealed, unlimited free letter guesses, no time penalty. "
+        f"Not saved to the leaderboard.\n"
+        f"🔥 **Hard** \u2014 minimal reveal, tiered wrong-guess penalties that escalate on repeats. "
+        f"Counts toward your rolling average and the leaderboard.",
+        view=view,
+    )
+    view.message = msg
+    await view.wait()
+    return view.difficulty
+
+
 @bot.command(name="blitz")
 async def blitz_start(ctx: commands.Context):
     if ctx.channel.id in active_games or ctx.channel.id in active_blitz_games:
@@ -1049,11 +1224,22 @@ async def blitz_start(ctx: commands.Context):
         await ctx.send(f"⚠️ Can't start a game: {e}")
         return
 
-    game = BlitzSpeedGame(ctx.channel, ctx.author, word_lists, mode="blitz")
+    difficulty = await _prompt_blitz_difficulty(ctx)
+
+    if ctx.channel.id in active_games or ctx.channel.id in active_blitz_games:
+        await ctx.send(
+            "Another game started in this channel while you were picking a mode \u2014 "
+            "try again once it's done."
+        )
+        return
+
+    game = BlitzSpeedGame(ctx.channel, ctx.author, word_lists, mode="blitz", difficulty=difficulty)
     active_blitz_games[ctx.channel.id] = game
+    difficulty_label = "🌱 Easy" if difficulty == "easy" else "🔥 Hard"
     await ctx.send(
-        f"⚡ **{ctx.author.display_name}** started a Speed Blitz! Guess {BLITZ_WORDS_TO_GUESS} words as fast "
-        f"as you can \u2014 the clock is running down to the millisecond. Go!"
+        f"⚡ **{ctx.author.display_name}** started a Speed Blitz ({difficulty_label} mode)! "
+        f"Guess {BLITZ_WORDS_TO_GUESS} words as fast as you can \u2014 the clock is running down to "
+        f"the millisecond. Go!"
     )
     await game.start()
 
@@ -1070,12 +1256,22 @@ async def blitz_phone_start(ctx: commands.Context):
         await ctx.send(f"⚠️ Can't start a game: {e}")
         return
 
-    game = BlitzSpeedGame(ctx.channel, ctx.author, word_lists, mode="blitzp")
+    difficulty = await _prompt_blitz_difficulty(ctx)
+
+    if ctx.channel.id in active_games or ctx.channel.id in active_blitz_games:
+        await ctx.send(
+            "Another game started in this channel while you were picking a mode \u2014 "
+            "try again once it's done."
+        )
+        return
+
+    game = BlitzSpeedGame(ctx.channel, ctx.author, word_lists, mode="blitzp", difficulty=difficulty)
     active_blitz_games[ctx.channel.id] = game
+    difficulty_label = "🌱 Easy" if difficulty == "easy" else "🔥 Hard"
     await ctx.send(
-        f"⚡ **{ctx.author.display_name}** started a Speed Blitz (Phone)! Guess {BLITZ_WORDS_TO_GUESS} words as "
-        f"fast as you can \u2014 the clock is running down to the millisecond. Scores here go to the phone "
-        f"leaderboard. Go!"
+        f"⚡ **{ctx.author.display_name}** started a Speed Blitz (Phone, {difficulty_label} mode)! "
+        f"Guess {BLITZ_WORDS_TO_GUESS} words as fast as you can \u2014 the clock is running down to "
+        f"the millisecond. Scores here go to the phone leaderboard. Go!"
     )
     await game.start()
 
