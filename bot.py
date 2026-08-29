@@ -1314,9 +1314,12 @@ class BlitzSpeedGame:
         )
 
         is_hard = self.difficulty == "hard"
-        if is_hard and not cancelled and not idle:
-            # Only record if it's hard and not a cancellation/timeout.
-            # (For cancellations we don't record at all, we just send a penalty message)
+        if is_hard:
+            # Hard mode always records a score once end_game() is reached -
+            # whether the round finished normally, the player cancelled it
+            # themselves (!hangmanstop), or it idle-timed-out. All three are
+            # real penalty/completion scores and should count toward the
+            # rolling average and leaderboard.
             avg_score, games_counted, rank, recent_scores = await record_score(
                 "blitz", self.player.id, self.player.display_name, elapsed
             )
@@ -1351,7 +1354,6 @@ class BlitzSpeedGame:
                         f"{self.words_to_guess - self.correct_count} remaining word(s) × 60s)."
                     )
             embed = discord.Embed(title=title, description=reason, color=discord.Color.red())
-            # We do NOT record any score for cancellations/timeouts.
         else:
             embed = discord.Embed(
                 title="🏁 Speed Blitz Complete!",
@@ -1367,8 +1369,9 @@ class BlitzSpeedGame:
             for name, value in build_time_interval_fields(self.word_times):
                 embed.add_field(name=name, value=value, inline=False)
 
-        if is_hard and not cancelled and not idle:
-            # Only show rolling average and rank for completed hard games
+        if is_hard:
+            # Show rolling average and rank whenever a score was recorded
+            # above - completed run, self-cancel, or idle timeout.
             embed.add_field(name="Rolling Average", value=f"{format_score(avg_score)} ({window_note})")
             embed.add_field(
                 name=f"Last {games_counted} Score{'s' if games_counted != 1 else ''}",
@@ -1387,7 +1390,8 @@ class BlitzSpeedGame:
                 "Play `!blitz` in Hard mode for that to count!",
                 inline=False,
             )
-        # For cancellations, we don't add extra fields.
+        # Moderator/grace-period cancellations never reach end_game() at all
+        # (see cancel()), so there's nothing further to add here for those.
 
         await self.channel.send(embed=embed)
 
