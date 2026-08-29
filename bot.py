@@ -51,7 +51,7 @@ MIN_ROUNDS = 1
 MAX_ROUNDS = 20
 JOIN_WINDOW_SECONDS = 12
 ROUND_TIMEOUT_SECONDS = 100          # for regular multiplayer hangman
-CLASSIC_ROUND_TIMEOUT = 150          # for classic solo hangman (CHANGE: increased from 100)
+CLASSIC_ROUND_TIMEOUT = 300          # for classic solo hangman (CHANGE: increased from 150)
 VOWELS = set("AEIOU")
 CONSONANTS = set("BCDFGHJKLMNPQRSTVWXYZ")
 
