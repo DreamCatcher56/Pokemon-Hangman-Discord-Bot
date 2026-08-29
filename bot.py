@@ -1,4 +1,4 @@
-﻿"""
+"""
 Pokemon Hangman Competition Bot
 --------------------------------
 A Discord bot game where a host starts a hangman round, other players can
@@ -39,7 +39,6 @@ DATA_FILES = {
     "Item": "data/items.txt",
 }
 
-
 # Same categories as regular hangman, except Items are pulled from a
 # separate curated list for the blitz modes.
 BLITZ_DATA_FILES = {
@@ -47,12 +46,12 @@ BLITZ_DATA_FILES = {
     "Item": "data/blitzitems.txt",
 }
 
-
 DEFAULT_ROUNDS_PER_GAME = 7
 MIN_ROUNDS = 1
 MAX_ROUNDS = 20
 JOIN_WINDOW_SECONDS = 12
-ROUND_TIMEOUT_SECONDS = 100
+ROUND_TIMEOUT_SECONDS = 100          # for regular multiplayer hangman
+CLASSIC_ROUND_TIMEOUT = 150          # for classic solo hangman (CHANGE: increased from 100)
 VOWELS = set("AEIOU")
 CONSONANTS = set("BCDFGHJKLMNPQRSTVWXYZ")
 
@@ -108,14 +107,11 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # channel_id -> HangmanGame
 active_games: dict[int, "HangmanGame"] = {}
 
-
 # channel_id -> BlitzSpeedGame
 active_blitz_games: dict[int, "BlitzSpeedGame"] = {}
 
-
 # channel_id -> ClassicGame
 active_classic_games: dict[int, "ClassicGame"] = {}
-
 
 
 
@@ -127,14 +123,12 @@ def fire_and_forget(coro) -> asyncio.Task:
     silently as an "exception never retrieved" warning."""
     task = asyncio.create_task(coro)
 
-
     def _log_if_failed(t: asyncio.Task):
         if t.cancelled():
             return
         exc = t.exception()
         if exc is not None:
             print(f"⚠️ Background message send failed: {exc!r}")
-
 
     task.add_done_callback(_log_if_failed)
     return task
@@ -212,7 +206,6 @@ def build_time_interval_fields(word_times: list[tuple[str, float, float]], max_c
         for i, (word, duration, cumulative) in enumerate(word_times, start=1)
     ]
 
-
     chunks: list[str] = []
     current: list[str] = []
     current_len = 0
@@ -225,7 +218,6 @@ def build_time_interval_fields(word_times: list[tuple[str, float, float]], max_c
         current_len += added_len
     if current:
         chunks.append("\n".join(current))
-
 
     fields = []
     for i, chunk in enumerate(chunks):
@@ -278,7 +270,6 @@ def _init_db_sync():
             """
         )
 
-
         # Older deployments created this table with a
         # CHECK(mode IN ('blitz1', 'blitz2')) constraint. SQLite can't drop
         # a CHECK constraint with ALTER TABLE, so detect it and rebuild the
@@ -307,18 +298,16 @@ def _init_db_sync():
             )
             conn.execute("DROP TABLE blitz_scores_old")
 
-
         # blitz1/blitz2/blitz2p were retired in favor of blitz/blitzp with a
         # rolling-average skill metric. Old scores under the retired mode
         # names don't carry over - clear them out so everyone starts fresh
         # under the new modes instead of leaving orphaned rows sitting in
         # the database.
-        conn.execute("DELETE FROM blitz_scores WHERE mode IN ('blitz1', 'blitz2', 'blitz2p')")
-
+        # REMOVED: we now only keep 'blitz' mode; delete blitzp as well.
+        conn.execute("DELETE FROM blitz_scores WHERE mode IN ('blitz1', 'blitz2', 'blitz2p', 'blitzp')")
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_blitz_mode_score ON blitz_scores(mode, score)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_blitz_mode_user ON blitz_scores(mode, user_id)")
-
 
         # Classic mode table
         conn.execute(
@@ -334,7 +323,6 @@ def _init_db_sync():
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_classic_user ON classic_scores(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_classic_score ON classic_scores(score DESC)")
-
 
         conn.commit()
     finally:
@@ -359,7 +347,6 @@ def _record_score_sync(mode: str, user_id: int, username: str, score: float) -> 
         )
         conn.commit()
 
-
         recent_scores = [
             row[0]
             for row in conn.execute(
@@ -369,7 +356,6 @@ def _record_score_sync(mode: str, user_id: int, username: str, score: float) -> 
         ]
         avg_score = sum(recent_scores) / len(recent_scores)
         games_counted = len(recent_scores)
-
 
         rank = conn.execute(
             """
@@ -389,7 +375,6 @@ def _record_score_sync(mode: str, user_id: int, username: str, score: float) -> 
             """,
             (mode, ROLLING_AVERAGE_WINDOW, avg_score),
         ).fetchone()[0]
-
 
         return avg_score, games_counted, rank, recent_scores
     finally:
@@ -503,18 +488,15 @@ def _record_classic_score_sync(user_id: int, username: str, score: int) -> tuple
         )
         conn.commit()
 
-
         pb = conn.execute(
             "SELECT MAX(score) FROM classic_scores WHERE user_id = ?",
             (user_id,)
         ).fetchone()[0] or 0
 
-
         games_played = conn.execute(
             "SELECT COUNT(*) FROM classic_scores WHERE user_id = ?",
             (user_id,)
         ).fetchone()[0]
-
 
         # Rank = number of users with a strictly higher personal best + 1
         rank = conn.execute(
@@ -530,7 +512,6 @@ def _record_classic_score_sync(user_id: int, username: str, score: int) -> tuple
             """,
             (score,)
         ).fetchone()[0]
-
 
         return pb, games_played, rank
     finally:
@@ -606,7 +587,6 @@ class JoinView(discord.ui.View):
         super().__init__(timeout=timeout)
         self.players: list[discord.Member] = [host]
 
-
     @discord.ui.button(label="Join Game", style=discord.ButtonStyle.green, emoji="🎮")
     async def join(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user in self.players:
@@ -616,7 +596,6 @@ class JoinView(discord.ui.View):
         await interaction.response.send_message(
             f"**{interaction.user.display_name}** joined the game! ({len(self.players)} players)",
         )
-
 
     async def on_timeout(self):
         for item in self.children:
@@ -631,11 +610,10 @@ BLITZ_DIFFICULTY_SELECT_TIMEOUT_SECONDS = 20
 
 
 class BlitzDifficultyView(discord.ui.View):
-    """Shown when !blitz / !blitzp is invoked so the player can pick Easy
+    """Shown when !blitz is invoked so the player can pick Easy
     or Hard mode before the round starts. Only the player who ran the
     command can make the selection. Defaults to Hard mode if the player
     doesn't pick anything before the view times out."""
-
 
     def __init__(self, player: discord.Member, timeout: int = BLITZ_DIFFICULTY_SELECT_TIMEOUT_SECONDS):
         super().__init__(timeout=timeout)
@@ -643,7 +621,6 @@ class BlitzDifficultyView(discord.ui.View):
         self.difficulty: str = "hard"
         self.message: discord.Message | None = None
         self._decided = asyncio.Event()
-
 
     async def _choose(self, interaction: discord.Interaction, difficulty: str, label: str):
         if interaction.user.id != self.player.id:
@@ -660,16 +637,13 @@ class BlitzDifficultyView(discord.ui.View):
         self._decided.set()
         self.stop()
 
-
     @discord.ui.button(label="Easy Mode", style=discord.ButtonStyle.green, emoji="🌱")
     async def easy(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._choose(interaction, "easy", "🌱 Easy")
 
-
     @discord.ui.button(label="Hard Mode", style=discord.ButtonStyle.red, emoji="🔥")
     async def hard(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._choose(interaction, "hard", "🔥 Hard")
-
 
     async def on_timeout(self):
         if self._decided.is_set():
@@ -688,6 +662,74 @@ class BlitzDifficultyView(discord.ui.View):
                 pass
 
 
+
+
+# ---------------------------------------------------------------------------
+# Category selection view for !hangman (button-based)
+# ---------------------------------------------------------------------------
+class CategorySelectView(discord.ui.View):
+    """Buttons to choose which word list to use for the regular hangman game."""
+    def __init__(self, author: discord.Member, timeout: int = 30):
+        super().__init__(timeout=timeout)
+        self.author = author
+        self.selected_category: str | None = None  # None means "All"
+        self._decided = asyncio.Event()
+        self.message: discord.Message | None = None
+
+    async def _choose(self, interaction: discord.Interaction, category: str | None, label: str):
+        if interaction.user.id != self.author.id:
+            await interaction.response.send_message(
+                "Only the person who started the game can choose the word list.",
+                ephemeral=True
+            )
+            return
+        self.selected_category = category  # None for All, or string for a specific category
+        # Disable all buttons
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(
+            content=f"Word list chosen: **{label}**. Now starting the join lobby...",
+            view=self
+        )
+        self._decided.set()
+        self.stop()
+
+    @discord.ui.button(label="All", style=discord.ButtonStyle.primary, emoji="📚")
+    async def all_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._choose(interaction, None, "All")
+
+    @discord.ui.button(label="Pokémon", style=discord.ButtonStyle.success, emoji="🐾")
+    async def pokemon_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._choose(interaction, "Pokémon", "Pokémon")
+
+    @discord.ui.button(label="Ability", style=discord.ButtonStyle.secondary, emoji="✨")
+    async def ability_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._choose(interaction, "Ability", "Ability")
+
+    @discord.ui.button(label="Move", style=discord.ButtonStyle.danger, emoji="⚔️")
+    async def move_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._choose(interaction, "Move", "Move")
+
+    @discord.ui.button(label="Item", style=discord.ButtonStyle.blurple, emoji="🎒")
+    async def item_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._choose(interaction, "Item", "Item")
+
+    async def on_timeout(self):
+        if self._decided.is_set():
+            return
+        for item in self.children:
+            item.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(
+                    content="No selection made in time. Defaulting to **All** categories.",
+                    view=self
+                )
+            except discord.HTTPException:
+                pass
+        self.selected_category = None  # default to All
+        self._decided.set()
+        self.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -718,22 +760,17 @@ class HangmanGame:
         # at a time so a word/round can never be completed twice.
         self._lock = asyncio.Lock()
 
-
     def player_by_id(self, uid: int) -> discord.Member | None:
         return discord.utils.get(self.players, id=uid)
-
 
     def build_display(self) -> str:
         return render_word(self.current_word, self.guessed_letters)
 
-
     def is_fully_revealed(self) -> bool:
         return word_fully_revealed(self.current_word, self.guessed_letters)
 
-
     def wrong_letters_display(self) -> str:
         return format_wrong_letters(self.wrong_letters)
-
 
     def _prepare_round(self) -> discord.Embed:
         """Synchronously advances round state and builds the round-start
@@ -747,7 +784,6 @@ class HangmanGame:
         self.wrong_letters = set()
         self.round_start_time = time.monotonic()
 
-
         embed = discord.Embed(
             title=f"Round {self.round_num} of {self.rounds_per_game}",
             description=f"Category: **{self.current_category}**\n\n`{self.build_display()}`",
@@ -757,10 +793,8 @@ class HangmanGame:
         embed.set_footer(text=f"Vowels are pre-filled. {ROUND_TIMEOUT_SECONDS}s to guess. Type a letter or the full answer.")
         return embed
 
-
     async def start_round(self, prior_announcement: str | None = None):
         embed = self._prepare_round()
-
 
         async def _dispatch():
             if prior_announcement:
@@ -768,11 +802,9 @@ class HangmanGame:
             await self.channel.send(embed=embed)
         fire_and_forget(_dispatch())
 
-
         if self._timeout_task:
             self._timeout_task.cancel()
         self._timeout_task = asyncio.create_task(self._round_timeout())
-
 
     async def _round_timeout(self):
         try:
@@ -785,18 +817,15 @@ class HangmanGame:
             timeout_text = f"⏰ Time's up! The answer was **{self.current_word}**. No points awarded this round."
             await self._advance(prior_announcement=timeout_text)
 
-
     async def handle_guess(self, message: discord.Message):
         if not self.active:
             return
         if message.author not in self.players:
             return
 
-
         content = message.content.strip()
         if not content or not content.replace(" ", "").isalpha():
             return
-
 
         async with self._lock:
             if not self.active:
@@ -806,7 +835,6 @@ class HangmanGame:
             else:
                 await self._handle_word_guess(message, content)
 
-
     async def _handle_letter_guess(self, message: discord.Message, letter: str):
         author = message.author
         if letter in VOWELS:
@@ -815,7 +843,6 @@ class HangmanGame:
         if letter in self.guessed_letters:
             return  # silently ignore repeat guesses to avoid spamming the channel
         self.guessed_letters.add(letter)
-
 
         if letter in self.current_word.upper():
             fire_and_forget(self.channel.send(
@@ -827,7 +854,6 @@ class HangmanGame:
             self.wrong_letters.add(letter)
             fire_and_forget(message.add_reaction("❌"))
 
-
     async def _handle_word_guess(self, message: discord.Message, guess: str):
         author = message.author
         if guess.upper() == self.current_word.upper():
@@ -835,7 +861,6 @@ class HangmanGame:
             await self._award_point(author, completed_via_letter=False)
         else:
             fire_and_forget(message.add_reaction("❌"))
-
 
     async def _award_point(self, author: discord.Member, completed_via_letter: bool):
         if self.round_start_time is not None:
@@ -848,7 +873,6 @@ class HangmanGame:
         )
         await self._advance(prior_announcement=announce_text)
 
-
     async def _advance(self, prior_announcement: str | None = None):
         # _advance() can run *inside* self._timeout_task (a natural round
         # timeout calls this directly) - cancelling it here would throw
@@ -860,19 +884,15 @@ class HangmanGame:
         else:
             await self.start_round(prior_announcement=prior_announcement)
 
-
     async def end_game(self, prior_announcement: str | None = None):
         self.active = False
         active_games.pop(self.channel.id, None)
 
-
         ranking = sorted(self.scores.items(), key=lambda x: x[1], reverse=True)
         lines = [f"{self.player_by_id(uid).display_name}: **{score}**" for uid, score in ranking]
 
-
         top_score = ranking[0][1]
         winners = [self.player_by_id(uid).display_name for uid, score in ranking if score == top_score]
-
 
         embed = discord.Embed(title="🏆 Game Over!", description="\n".join(lines), color=discord.Color.gold())
         if len(self.players) == 1:
@@ -890,11 +910,9 @@ class HangmanGame:
         else:
             embed.add_field(name="It's a tie!", value=", ".join(winners))
 
-
         if prior_announcement:
             await self.channel.send(prior_announcement)
         await self.channel.send(embed=embed)
-
 
     async def cancel(self, cancelled_by: discord.Member):
         self.active = False
@@ -946,7 +964,6 @@ def pick_blitz_starting_letters(word: str) -> set[str]:
     round. For words at or under that threshold, reveals only a single
     random consonant (no vowel) to raise the difficulty on short words.
 
-
     In both cases, the letter is chosen only from among the least-frequently
     -occurring letters in its category (vowel or consonant) within the word:
     a letter that repeats more than other vowels/consonants in the same word
@@ -956,17 +973,14 @@ def pick_blitz_starting_letters(word: str) -> set[str]:
     distinct vowel/consonant appears), the choice is random among them same
     as before.
 
-
     Falls back gracefully if the word happens to have no vowels or no
     consonants. Since guessed_letters is a set of letters (not positions),
     every occurrence of the revealed letter is displayed automatically."""
     letter_counts = Counter(ch.upper() for ch in word if ch.isalpha())
     letter_count = sum(letter_counts.values())
 
-
     starting: set[str] = set()
     is_short_word = letter_count <= BLITZ_SHORT_WORD_LETTER_THRESHOLD
-
 
     if is_short_word:
         consonant_candidates = _least_frequent_letters(letter_counts, CONSONANTS)
@@ -999,8 +1013,7 @@ def pick_easy_blitz_starting_letters(word: str) -> set[str]:
 
 
 class BlitzSpeedGame:
-    """!blitz / !blitzp - guess a fixed number of words as fast as possible, timed to the millisecond."""
-
+    """!blitz - guess a fixed number of words as fast as possible, timed to the millisecond."""
 
     def __init__(
         self,
@@ -1008,14 +1021,13 @@ class BlitzSpeedGame:
         player: discord.Member,
         word_lists,
         words_to_guess: int = BLITZ_WORDS_TO_GUESS,
-        mode: str = "blitz",
         difficulty: str = "hard",
     ):
         self.channel = channel
         self.player = player
         self.word_lists = word_lists
         self.words_to_guess = words_to_guess
-        self.mode = mode  # "blitz" or "blitzp" - which leaderboard/rolling average this run counts toward
+        # REMOVED: mode parameter - always "blitz"
         # "easy" or "hard". Easy: all vowels pre-revealed, unlimited free
         # letter guesses (no time penalty), and the run is never saved to
         # the leaderboard/rolling average. Hard: the full current ruleset
@@ -1045,7 +1057,6 @@ class BlitzSpeedGame:
         # spam-guessing a tier for max info. Resets every new word.
         self.tier_wrong_counts: dict[int, int] = {}
 
-
     def _reset_idle_timeout(self):
         """(Re)start the AFK timer. Any valid guess activity should call this."""
         if self._idle_task and not self._idle_task.done():
@@ -1053,12 +1064,10 @@ class BlitzSpeedGame:
         if self.active:
             self._idle_task = asyncio.create_task(self._idle_timeout())
 
-
     def _cancel_idle_timeout(self):
         if self._idle_task and not self._idle_task.done():
             self._idle_task.cancel()
         self._idle_task = None
-
 
     async def _idle_timeout(self):
         try:
@@ -1068,18 +1077,20 @@ class BlitzSpeedGame:
         async with self._lock:
             if not self.active:
                 return
+            # For easy mode, do a clean cancel without penalty
+            if self.difficulty == "easy":
+                await self._clean_cancel(reason="⏰ Inactivity timeout (Easy mode – no penalty).")
+                return
             # Same penalty formula as a mid-run player cancel.
             elapsed_so_far = (time.perf_counter() - self.start_time) if self.start_time is not None else 0.0
             words_remaining = self.words_to_guess - self.correct_count
-            penalty_score = elapsed_so_far + self.total_penalty + (words_remaining * 30.0)
+            penalty_score = elapsed_so_far + self.total_penalty + (words_remaining * 60.0)  # CHANGE: 60s per word
             await self.end_game(forced_score=penalty_score, cancelled=True, idle=True)
-
 
     async def start(self):
         self.start_time = time.perf_counter()
         self._reset_idle_timeout()
         await self._next_word()
-
 
     def _prepare_next_word(self) -> discord.Embed:
         """Synchronously advances to the next word and builds its embed,
@@ -1094,7 +1105,6 @@ class BlitzSpeedGame:
         self.word_start_time = time.perf_counter()
         self.current_word_penalty = 0.0
         self.tier_wrong_counts = {}
-
 
         embed = discord.Embed(
             title=f"⚡ Speed Blitz ({'Easy' if self.difficulty == 'easy' else 'Hard'})! "
@@ -1121,10 +1131,8 @@ class BlitzSpeedGame:
         embed.set_footer(text=footer_text)
         return embed
 
-
     async def _next_word(self, prior_announcement: str | None = None):
         embed = self._prepare_next_word()
-
 
         async def _dispatch():
             if prior_announcement:
@@ -1132,16 +1140,13 @@ class BlitzSpeedGame:
             await self.channel.send(embed=embed)
         fire_and_forget(_dispatch())
 
-
     async def handle_guess(self, message: discord.Message):
         if not self.active or message.author.id != self.player.id:
             return
 
-
         content = message.content.strip()
         if not content or not content.replace(" ", "").isalpha():
             return
-
 
         async with self._lock:
             if not self.active:
@@ -1153,12 +1158,10 @@ class BlitzSpeedGame:
             else:
                 await self._handle_word_guess(message, content)
 
-
     async def _handle_letter_guess(self, message: discord.Message, letter: str):
         if letter in self.guessed_letters:
             return  # already revealed (starting letter or previously guessed) - no penalty
         self.guessed_letters.add(letter)
-
 
         if letter in self.current_word.upper():
             fire_and_forget(self.channel.send(
@@ -1192,14 +1195,12 @@ class BlitzSpeedGame:
                 feedback + format_wrong_letters(self.wrong_letters)
             ))
 
-
     async def _handle_word_guess(self, message: discord.Message, guess: str):
         if guess.upper() == self.current_word.upper():
             self.guessed_letters = {ch.upper() for ch in self.current_word if ch.isalpha()}
             await self._word_complete()
         else:
             fire_and_forget(message.add_reaction("❌"))
-
 
     async def _word_complete(self):
         if self.word_start_time is not None:
@@ -1214,7 +1215,6 @@ class BlitzSpeedGame:
             announce_text = f"🎉 **{self.current_word}**! {self.correct_count}/{self.words_to_guess} done."
             await self._next_word(prior_announcement=announce_text)
 
-
     async def end_game(self, forced_score: float | None = None, cancelled: bool = False, idle: bool = False):
         self.active = False
         self._cancel_idle_timeout()
@@ -1223,39 +1223,45 @@ class BlitzSpeedGame:
             (time.perf_counter() - self.start_time) + self.total_penalty
         )
 
-
         is_hard = self.difficulty == "hard"
-        if is_hard:
+        if is_hard and not cancelled and not idle:
+            # Only record if it's hard and not a cancellation/timeout.
+            # (For cancellations we don't record at all, we just send a penalty message)
             avg_score, games_counted, rank, recent_scores = await record_score(
-                self.mode, self.player.id, self.player.display_name, elapsed
+                "blitz", self.player.id, self.player.display_name, elapsed
             )
             window_note = (
                 f"last {games_counted} game{'s' if games_counted != 1 else ''}"
                 if games_counted < ROLLING_AVERAGE_WINDOW
                 else f"last {ROLLING_AVERAGE_WINDOW} games"
             )
-            # recent_scores is newest-first (ORDER BY id DESC); keep that order
             scores_display = ", ".join(f"{s:.3f}s" for s in recent_scores)
 
-
-        if cancelled:
+        if cancelled or idle:
             if idle:
-                title = "🛑 Speed Blitz Timed Out (Penalty Applied)"
-                reason = (
-                    f"**{self.player.display_name}** went inactive for {BLITZ_IDLE_TIMEOUT_SECONDS}s. "
-                    f"Penalty score recorded: **{elapsed:.3f}s** "
-                    f"(time so far + {self.total_penalty:.1f}s in letter penalties + "
-                    f"{self.words_to_guess - self.correct_count} remaining word(s) × 30s)."
-                )
+                title = "🛑 Speed Blitz Timed Out"
+                if self.difficulty == "easy":
+                    reason = f"**{self.player.display_name}** went inactive for {BLITZ_IDLE_TIMEOUT_SECONDS}s. (Easy mode – no penalty applied.)"
+                else:
+                    reason = (
+                        f"**{self.player.display_name}** went inactive for {BLITZ_IDLE_TIMEOUT_SECONDS}s. "
+                        f"Penalty score recorded: **{elapsed:.3f}s** "
+                        f"(time so far + {self.total_penalty:.1f}s in letter penalties + "
+                        f"{self.words_to_guess - self.correct_count} remaining word(s) × 60s)."
+                    )
             else:
-                title = "🛑 Speed Blitz Cancelled (Penalty Applied)"
-                reason = (
-                    f"**{self.player.display_name}** stopped the round early. "
-                    f"Penalty score recorded: **{elapsed:.3f}s** "
-                    f"(time so far + {self.total_penalty:.1f}s in letter penalties + "
-                    f"{self.words_to_guess - self.correct_count} remaining word(s) × 30s)."
-                )
+                title = "🛑 Speed Blitz Cancelled"
+                if self.difficulty == "easy":
+                    reason = f"**{self.player.display_name}** stopped the round early. (Easy mode – no penalty applied.)"
+                else:
+                    reason = (
+                        f"**{self.player.display_name}** stopped the round early. "
+                        f"Penalty score recorded: **{elapsed:.3f}s** "
+                        f"(time so far + {self.total_penalty:.1f}s in letter penalties + "
+                        f"{self.words_to_guess - self.correct_count} remaining word(s) × 60s)."
+                    )
             embed = discord.Embed(title=title, description=reason, color=discord.Color.red())
+            # We do NOT record any score for cancellations/timeouts.
         else:
             embed = discord.Embed(
                 title="🏁 Speed Blitz Complete!",
@@ -1271,8 +1277,8 @@ class BlitzSpeedGame:
             for name, value in build_time_interval_fields(self.word_times):
                 embed.add_field(name=name, value=value, inline=False)
 
-
-        if is_hard:
+        if is_hard and not cancelled and not idle:
+            # Only show rolling average and rank for completed hard games
             embed.add_field(name="Rolling Average", value=f"{format_score(avg_score)} ({window_note})")
             embed.add_field(
                 name=f"Last {games_counted} Score{'s' if games_counted != 1 else ''}",
@@ -1284,15 +1290,23 @@ class BlitzSpeedGame:
                 value=f"🌍 You're currently #{rank} on the leaderboard! (`!lb` to view)",
                 inline=False,
             )
-        else:
+        elif self.difficulty == "easy":
             embed.add_field(
                 name="\u200b",
                 value="🌱 Easy Mode — this score isn't saved to the leaderboard or your rolling average. "
-                "Play `!blitz` or `!blitzp` in Hard mode for that to count!",
+                "Play `!blitz` in Hard mode for that to count!",
                 inline=False,
             )
+        # For cancellations, we don't add extra fields.
+
         await self.channel.send(embed=embed)
 
+    async def _clean_cancel(self, reason: str | None = None):
+        """Cleanly cancel the game without recording any score (used for Easy mode cancellation)."""
+        self.active = False
+        self._cancel_idle_timeout()
+        active_blitz_games.pop(self.channel.id, None)
+        await self.channel.send(f"🛑 Speed Blitz cancelled. {reason or ''}")
 
     async def cancel(self, cancelled_by: discord.Member):
         # Only the player who started the blitz can receive a penalty score.
@@ -1300,7 +1314,6 @@ class BlitzSpeedGame:
         is_starter = cancelled_by.id == self.player.id
         elapsed_so_far = (time.perf_counter() - self.start_time) if self.start_time is not None else 0.0
         words_remaining = self.words_to_guess - self.correct_count
-
 
         # Grace period: cancel within 5s of start with zero words completed
         # is treated as a misclick and is not penalized / not recorded.
@@ -1310,13 +1323,16 @@ class BlitzSpeedGame:
             and self.correct_count == 0
         )
 
-
-        if is_starter and not in_grace:
-            # Penalty: time elapsed so far + accumulated letter penalties + (words remaining) × 30s
-            penalty_score = elapsed_so_far + self.total_penalty + (words_remaining * 30.0)
-            await self.end_game(forced_score=penalty_score, cancelled=True)
+        # If easy mode, always clean cancel (no penalty, no score)
+        if self.difficulty == "easy":
+            await self._clean_cancel(reason="Easy mode – no penalty applied.")
             return
 
+        if is_starter and not in_grace:
+            # Penalty: time elapsed so far + accumulated letter penalties + (words remaining) × 60s  # CHANGE: 60s
+            penalty_score = elapsed_so_far + self.total_penalty + (words_remaining * 60.0)
+            await self.end_game(forced_score=penalty_score, cancelled=True)
+            return
 
         # Clean cancel (moderator, or starter within grace window)
         self.active = False
@@ -1339,7 +1355,7 @@ class BlitzSpeedGame:
 
 
 class ClassicGame:
-    """Solo classic hangman – 6 wrong guesses, 100s per round, no pre‑revealed letters."""
+    """Solo classic hangman – 7 wrong guesses, 150s per round, no pre‑revealed letters."""
     def __init__(self, channel: discord.TextChannel, player: discord.Member, word_lists: dict[str, list[str]]):
         self.channel = channel
         self.player = player
@@ -1351,19 +1367,16 @@ class ClassicGame:
         self.guessed_letters: set[str] = set()
         self.wrong_letters: set[str] = set()
         self.wrong_guesses = 0
-        self.max_wrong = 6
+        self.max_wrong = 7  # CHANGED: from 6 to 7
         self.round_start_time: float | None = None
         self._timeout_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
-
     def render_display(self) -> str:
         return render_word(self.current_word, self.guessed_letters)
 
-
     def is_fully_revealed(self) -> bool:
         return word_fully_revealed(self.current_word, self.guessed_letters)
-
 
     async def start_round(self, prior_announcement: str | None = None):
         self.current_category, self.current_word = pick_word(self.word_lists)
@@ -1371,7 +1384,6 @@ class ClassicGame:
         self.wrong_letters = set()
         self.wrong_guesses = 0
         self.round_start_time = time.monotonic()
-
 
         embed = discord.Embed(
             title="Classic Hangman",
@@ -1383,26 +1395,22 @@ class ClassicGame:
             value=f"{self.wrong_guesses}/{self.max_wrong}\nLetters: {self.format_wrong_letters()}",
             inline=False,
         )
-        embed.set_footer(text="Guess a letter or the full word. 100s per round.")
-
+        embed.set_footer(text=f"Guess a letter or the full word. {CLASSIC_ROUND_TIMEOUT}s per round.")
 
         if prior_announcement:
             await self.channel.send(prior_announcement)
         await self.channel.send(embed=embed)
 
-
         if self._timeout_task:
             self._timeout_task.cancel()
         self._timeout_task = asyncio.create_task(self._round_timeout())
 
-
     def format_wrong_letters(self) -> str:
         return ", ".join(sorted(self.wrong_letters)) if self.wrong_letters else "None yet"
 
-
     async def _round_timeout(self):
         try:
-            await asyncio.sleep(ROUND_TIMEOUT_SECONDS)
+            await asyncio.sleep(CLASSIC_ROUND_TIMEOUT)
         except asyncio.CancelledError:
             return
         async with self._lock:
@@ -1410,14 +1418,12 @@ class ClassicGame:
                 return
             await self.end_game(reason="⏰ Time's up! You took too long on a word.", failed=True)
 
-
     async def handle_guess(self, message: discord.Message):
         if not self.active or message.author.id != self.player.id:
             return
         content = message.content.strip()
         if not content or not content.replace(" ", "").isalpha():
             return
-
 
         async with self._lock:
             if not self.active:
@@ -1427,12 +1433,10 @@ class ClassicGame:
             else:
                 await self._handle_word_guess(content)
 
-
     async def _handle_letter_guess(self, letter: str):
         if letter in self.guessed_letters:
             return
         self.guessed_letters.add(letter)
-
 
         if letter in self.current_word.upper():
             if self.is_fully_revealed():
@@ -1456,7 +1460,6 @@ class ClassicGame:
                     failed=True,
                 )
 
-
     async def _handle_word_guess(self, guess: str):
         if guess.upper() == self.current_word.upper():
             self.score += 1
@@ -1472,12 +1475,10 @@ class ClassicGame:
                     failed=True,
                 )
 
-
     async def _advance(self, prior_announcement: str | None = None):
         if self._timeout_task:
             self._timeout_task.cancel()
         await self.start_round(prior_announcement)
-
 
     async def end_game(self, reason: str | None = None, failed: bool = False):
         self.active = False
@@ -1485,11 +1486,9 @@ class ClassicGame:
             self._timeout_task.cancel()
         active_classic_games.pop(self.channel.id, None)
 
-
         pb, games_played, rank = await record_classic_score(
             self.player.id, self.player.display_name, self.score
         )
-
 
         embed = discord.Embed(
             title="🏁 Classic Hangman Over!",
@@ -1500,7 +1499,6 @@ class ClassicGame:
         embed.add_field(name="Personal Best", value=f"{pb} words (in {games_played} games)")
         embed.add_field(name="Leaderboard Rank", value=f"#{rank} overall")
         await self.channel.send(embed=embed)
-
 
     async def cancel(self, cancelled_by: discord.Member):
         if cancelled_by.id != self.player.id:
@@ -1526,19 +1524,38 @@ async def hangman_start(ctx: commands.Context, rounds: int = DEFAULT_ROUNDS_PER_
         await ctx.send("A game is already running in this channel! Finish it before starting a new one.")
         return
 
-
     if not (MIN_ROUNDS <= rounds <= MAX_ROUNDS):
         await ctx.send(f"Rounds must be between {MIN_ROUNDS} and {MAX_ROUNDS}. Try `!hangman {DEFAULT_ROUNDS_PER_GAME}`.")
         return
 
+    # --- Category selection view (buttons) ---
+    select_view = CategorySelectView(author=ctx.author, timeout=30)
+    msg = await ctx.send(
+        f"**{ctx.author.display_name}**, choose the word list for this Hangman game:",
+        view=select_view
+    )
+    select_view.message = msg
+    await select_view.wait()
+
+    # After selection or timeout, get the chosen category (None means All)
+    chosen_category = select_view.selected_category  # None = All
 
     try:
-        word_lists = load_word_lists()
+        if chosen_category is None:
+            word_lists = load_word_lists()  # All categories
+        else:
+            # Load only the chosen category
+            full_lists = load_word_lists()
+            if chosen_category not in full_lists:
+                await ctx.send(f"⚠️ Category '{chosen_category}' not found. Defaulting to All.")
+                word_lists = full_lists
+            else:
+                word_lists = {chosen_category: full_lists[chosen_category]}
     except (FileNotFoundError, ValueError) as e:
         await ctx.send(f"⚠️ Can't start a game: {e}")
         return
 
-
+    # Now create the join view
     view = JoinView(host=ctx.author, timeout=JOIN_WINDOW_SECONDS)
     await ctx.send(
         f"🎮 **{ctx.author.display_name}** started a Pokémon Hangman game! ({rounds} round{'s' if rounds != 1 else ''})\n"
@@ -1547,11 +1564,9 @@ async def hangman_start(ctx: commands.Context, rounds: int = DEFAULT_ROUNDS_PER_
     )
     await view.wait()
 
-
     players = view.players
     game = HangmanGame(ctx.channel, players, word_lists, host=ctx.author, rounds_per_game=rounds)
     active_games[ctx.channel.id] = game
-
 
     mode = "Solo" if len(players) == 1 else "Competition"
     names = ", ".join(p.display_name for p in players)
@@ -1589,18 +1604,15 @@ async def _start_category_hangman(
         await ctx.send("A game is already running in this channel! Finish it before starting a new one.")
         return
 
-
     if not (MIN_ROUNDS <= rounds <= MAX_ROUNDS):
         await ctx.send(f"Rounds must be between {MIN_ROUNDS} and {MAX_ROUNDS}. Try `!{command_name} {DEFAULT_ROUNDS_PER_GAME}`.")
         return
-
 
     try:
         word_lists = {category_key: load_word_lists()[category_key]}
     except (FileNotFoundError, ValueError) as e:
         await ctx.send(f"⚠️ Can't start a game: {e}")
         return
-
 
     view = JoinView(host=ctx.author, timeout=JOIN_WINDOW_SECONDS)
     await ctx.send(
@@ -1611,11 +1623,9 @@ async def _start_category_hangman(
     )
     await view.wait()
 
-
     players = view.players
     game = HangmanGame(ctx.channel, players, word_lists, host=ctx.author, rounds_per_game=rounds)
     active_games[ctx.channel.id] = game
-
 
     mode = "Solo" if len(players) == 1 else "Competition"
     names = ", ".join(p.display_name for p in players)
@@ -1705,7 +1715,6 @@ async def hangman_stop(ctx: commands.Context):
         await game.cancel(ctx.author)
         return
 
-
     blitz = active_blitz_games.get(ctx.channel.id)
     if blitz:
         # Only the player who started the blitz can stop it (no moderator override).
@@ -1715,7 +1724,6 @@ async def hangman_stop(ctx: commands.Context):
         await blitz.cancel(ctx.author)
         return
 
-
     classic = active_classic_games.get(ctx.channel.id)
     if classic:
         if ctx.author.id != classic.player.id:
@@ -1723,7 +1731,6 @@ async def hangman_stop(ctx: commands.Context):
             return
         await classic.cancel(ctx.author)
         return
-
 
     await ctx.send("There's no game running in this channel.")
 
@@ -1756,16 +1763,13 @@ async def blitz_start(ctx: commands.Context):
         await ctx.send("A game is already running in this channel! Finish it before starting a new one.")
         return
 
-
     try:
         word_lists = load_word_lists(BLITZ_DATA_FILES)
     except (FileNotFoundError, ValueError) as e:
         await ctx.send(f"⚠️ Can't start a game: {e}")
         return
 
-
     difficulty = await _prompt_blitz_difficulty(ctx)
-
 
     if ctx.channel.id in active_games or ctx.channel.id in active_blitz_games or ctx.channel.id in active_classic_games:
         await ctx.send(
@@ -1774,8 +1778,7 @@ async def blitz_start(ctx: commands.Context):
         )
         return
 
-
-    game = BlitzSpeedGame(ctx.channel, ctx.author, word_lists, mode="blitz", difficulty=difficulty)
+    game = BlitzSpeedGame(ctx.channel, ctx.author, word_lists, difficulty=difficulty)
     active_blitz_games[ctx.channel.id] = game
     difficulty_label = "🌱 Easy" if difficulty == "easy" else "🔥 Hard"
     await ctx.send(
@@ -1786,44 +1789,7 @@ async def blitz_start(ctx: commands.Context):
     await game.start()
 
 
-
-
-@bot.command(name="blitzp")
-async def blitz_phone_start(ctx: commands.Context):
-    if ctx.channel.id in active_games or ctx.channel.id in active_blitz_games or ctx.channel.id in active_classic_games:
-        await ctx.send("A game is already running in this channel! Finish it before starting a new one.")
-        return
-
-
-    try:
-        word_lists = load_word_lists(BLITZ_DATA_FILES)
-    except (FileNotFoundError, ValueError) as e:
-        await ctx.send(f"⚠️ Can't start a game: {e}")
-        return
-
-
-    difficulty = await _prompt_blitz_difficulty(ctx)
-
-
-    if ctx.channel.id in active_games or ctx.channel.id in active_blitz_games or ctx.channel.id in active_classic_games:
-        await ctx.send(
-            "Another game started in this channel while you were picking a mode \u2014 "
-            "try again once it's done."
-        )
-        return
-
-
-    game = BlitzSpeedGame(ctx.channel, ctx.author, word_lists, mode="blitzp", difficulty=difficulty)
-    active_blitz_games[ctx.channel.id] = game
-    difficulty_label = "🌱 Easy" if difficulty == "easy" else "🔥 Hard"
-    await ctx.send(
-        f"⚡ **{ctx.author.display_name}** started a Speed Blitz (Phone, {difficulty_label} mode)! "
-        f"Guess {BLITZ_WORDS_TO_GUESS} words as fast as you can \u2014 the clock is running down to "
-        f"the millisecond. Scores here go to the phone leaderboard. Go!"
-    )
-    await game.start()
-
-
+# REMOVED: !blitzp command entirely
 
 
 @bot.command(name="classic")
@@ -1832,17 +1798,15 @@ async def classic_start(ctx: commands.Context):
         await ctx.send("A game is already running in this channel! Finish it before starting a new one.")
         return
 
-
     try:
         word_lists = load_word_lists()  # uses all four categories
     except (FileNotFoundError, ValueError) as e:
         await ctx.send(f"⚠️ Can't start a game: {e}")
         return
 
-
     game = ClassicGame(ctx.channel, ctx.author, word_lists)
     active_classic_games[ctx.channel.id] = game
-    await ctx.send(f"🧩 **{ctx.author.display_name}** started a Classic Hangman game! You have 6 wrong guesses per word and 100s per round. Good luck!")
+    await ctx.send(f"🧩 **{ctx.author.display_name}** started a Classic Hangman game! You have 7 wrong guesses per word and 150s per round. Good luck!")
     await game.start_round()
 
 
@@ -1851,11 +1815,8 @@ async def classic_start(ctx: commands.Context):
 @bot.command(name="pb")
 async def personal_bests(ctx: commands.Context):
     blitz_avg = await get_rolling_average("blitz", ctx.author.id)
-    blitzp_avg = await get_rolling_average("blitzp", ctx.author.id)
     blitz_best = await get_best_scores("blitz", ctx.author.id, limit=5)
-    blitzp_best = await get_best_scores("blitzp", ctx.author.id, limit=5)
     classic_pb, classic_games = await get_classic_pb(ctx.author.id)
-
 
     def render_avg(result: tuple[float, int] | None, command_name: str) -> str:
         if result is None:
@@ -1868,18 +1829,14 @@ async def personal_bests(ctx: commands.Context):
         )
         return f"{format_score(avg_score)} ({window_note})"
 
-
     def render_best(scores: list[float], command_name: str) -> str:
         if not scores:
             return f"No scores yet \u2014 try `!{command_name}`!"
         return ", ".join(f"{s:.3f}s" for s in scores)
 
-
     embed = discord.Embed(title=f"🏅 {ctx.author.display_name}'s Stats", color=discord.Color.purple())
     embed.add_field(name="⚡ Blitz — Rolling Average", value=render_avg(blitz_avg, "blitz"), inline=False)
     embed.add_field(name="⚡ Blitz — Best 5 Scores", value=render_best(blitz_best, "blitz"), inline=False)
-    embed.add_field(name="📱 Blitz (Phone) — Rolling Average", value=render_avg(blitzp_avg, "blitzp"), inline=False)
-    embed.add_field(name="📱 Blitz (Phone) — Best 5 Scores", value=render_best(blitzp_best, "blitzp"), inline=False)
     embed.add_field(name="🧩 Classic Hangman — Personal Best", value=f"{classic_pb} words (in {classic_games} games)", inline=False)
     await ctx.send(embed=embed)
 
@@ -1900,11 +1857,9 @@ def format_classic_lines(rows: list[tuple[str, int, int]]) -> str:
 @bot.command(name="lb")
 async def leaderboard(ctx: commands.Context):
     blitz_rows = await get_average_leaderboard("blitz")
-    blitzp_rows = await get_average_leaderboard("blitzp")
     classic_rows = await get_classic_leaderboard()
 
-
-    def format_lines(rows: list[tuple[str, float, int]]) -> str:
+    def format_blitz_lines(rows: list[tuple[str, float, int]]) -> str:
         if not rows:
             return "_No scores yet_"
         return "\n".join(
@@ -1912,23 +1867,17 @@ async def leaderboard(ctx: commands.Context):
             for i, (username, avg_score, games_counted) in enumerate(rows, start=1)
         )
 
-
     embed = discord.Embed(
-        title="🌍 Blitz Leaderboards \u2014 Rolling Average",
+        title="🌍 Leaderboards",
         color=discord.Color.blue(),
     )
     embed.add_field(
-        name="⚡ Blitz",
-        value=format_lines(blitz_rows) if blitz_rows else "_No scores yet — try `!blitz`!_",
+        name="⚡ Blitz — Rolling Average (last 5 games)",
+        value=format_blitz_lines(blitz_rows) if blitz_rows else "_No scores yet — try `!blitz`!_",
         inline=False,
     )
     embed.add_field(
-        name="📱 Blitz (Phone)",
-        value=format_lines(blitzp_rows) if blitzp_rows else "_No scores yet — try `!blitzp`!_",
-        inline=False,
-    )
-    embed.add_field(
-        name="🧩 Classic Hangman — Best Scores",
+        name="🧩 Classic Hangman — Personal Best",
         value=format_classic_lines(classic_rows),
         inline=False,
     )
@@ -1942,21 +1891,17 @@ async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-
     await bot.process_commands(message)
-
 
     game = active_games.get(message.channel.id)
     if game and game.active:
         await game.handle_guess(message)
         return
 
-
     blitz = active_blitz_games.get(message.channel.id)
     if blitz and blitz.active:
         await blitz.handle_guess(message)
         return
-
 
     classic = active_classic_games.get(message.channel.id)
     if classic and classic.active:
