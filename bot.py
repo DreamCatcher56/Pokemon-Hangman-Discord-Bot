@@ -1,22 +1,4 @@
-"""
-Pokemon Hangman Competition Bot
---------------------------------
-A Discord bot game where a host starts a hangman round, other players can
-join, and everyone competes over 7 rounds guessing random Pokemon names,
-abilities, moves, or items pulled from text files.
-"""
 
-
-import os
-import random
-import asyncio
-import time
-import sqlite3
-from collections import Counter
-from datetime import datetime, timezone
-
-
-import discord
 from discord.ext import commands
 
 
