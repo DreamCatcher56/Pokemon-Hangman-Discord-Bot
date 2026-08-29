@@ -1065,9 +1065,10 @@ class BlitzSpeedGame:
             self._idle_task = asyncio.create_task(self._idle_timeout())
 
     def _cancel_idle_timeout(self):
-        if self._idle_task and not self._idle_task.done():
-            self._idle_task.cancel()
+        task = self._idle_task
         self._idle_task = None
+        if task and not task.done() and task is not asyncio.current_task():
+            task.cancel()
 
     async def _idle_timeout(self):
         try:
@@ -1482,7 +1483,7 @@ class ClassicGame:
 
     async def end_game(self, reason: str | None = None, failed: bool = False):
         self.active = False
-        if self._timeout_task:
+        if self._timeout_task and self._timeout_task is not asyncio.current_task():
             self._timeout_task.cancel()
         active_classic_games.pop(self.channel.id, None)
 
@@ -1505,7 +1506,7 @@ class ClassicGame:
             await self.channel.send("Only the player who started the game can stop it.")
             return
         self.active = False
-        if self._timeout_task:
+        if self._timeout_task and self._timeout_task is not asyncio.current_task():
             self._timeout_task.cancel()
         active_classic_games.pop(self.channel.id, None)
         await self.end_game(reason="🛑 Game stopped by player.", failed=False)
