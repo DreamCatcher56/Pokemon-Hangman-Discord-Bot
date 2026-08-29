@@ -1449,7 +1449,7 @@ class BlitzSpeedGame:
 
 
 class ClassicGame:
-    """Solo classic hangman – 7 wrong guesses, 150s per round, no pre‑revealed letters."""
+    """Solo classic hangman – 7 wrong guesses, 300s per round, no pre‑revealed letters."""
     def __init__(self, channel: discord.TextChannel, player: discord.Member, word_lists: dict[str, list[str]]):
         self.channel = channel
         self.player = player
@@ -1900,7 +1900,7 @@ async def classic_start(ctx: commands.Context):
 
     game = ClassicGame(ctx.channel, ctx.author, word_lists)
     active_classic_games[ctx.channel.id] = game
-    await ctx.send(f"🧩 **{ctx.author.display_name}** started a Classic Hangman game! You have 7 wrong guesses per word and 150s per round. Good luck!")
+    await ctx.send(f"🧩 **{ctx.author.display_name}** started a Classic Hangman game! You have 7 wrong guesses per word and {CLASSIC_ROUND_TIMEOUT}s per round. Good luck!")
     await game.start_round()
 
 
