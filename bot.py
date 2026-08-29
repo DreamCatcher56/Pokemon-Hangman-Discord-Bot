@@ -98,6 +98,9 @@ LEADERBOARD_SIZE = 10
 # via the BLITZ_DB_PATH env var, or scores won't survive a redeploy/restart.
 BLITZ_DB_PATH = os.getenv("BLITZ_DB_PATH", "data/blitz_scores.db")
 
+# Only this Discord user ID may run the destructive !resetdb command.
+BOT_OWNER_ID = 1239880146639388695
+
 
 intents = discord.Intents.default()
 intents.message_content = True  # required to read letter/word guesses
@@ -338,6 +341,31 @@ def init_db():
 
 
 
+def _reset_db_sync() -> tuple[int, int]:
+    """Deletes every row from both scoring tables (schema/indexes are left
+    intact - only the recorded rows are cleared). Returns
+    (blitz_rows_deleted, classic_rows_deleted) so the caller can report
+    what was actually wiped."""
+    conn = _get_connection()
+    try:
+        blitz_deleted = conn.execute("SELECT COUNT(*) FROM blitz_scores").fetchone()[0]
+        classic_deleted = conn.execute("SELECT COUNT(*) FROM classic_scores").fetchone()[0]
+        conn.execute("DELETE FROM blitz_scores")
+        conn.execute("DELETE FROM classic_scores")
+        conn.commit()
+        return blitz_deleted, classic_deleted
+    finally:
+        conn.close()
+
+
+
+
+async def reset_db() -> tuple[int, int]:
+    return await asyncio.to_thread(_reset_db_sync)
+
+
+
+
 def _record_score_sync(mode: str, user_id: int, username: str, score: float) -> tuple[float, int, int, list[float]]:
     conn = _get_connection()
     try:
@@ -573,6 +601,67 @@ def _get_classic_leaderboard_sync(limit: int) -> list[tuple[str, int, int]]:
 
 async def get_classic_leaderboard(limit: int = LEADERBOARD_SIZE) -> list[tuple[str, int, int]]:
     return await asyncio.to_thread(_get_classic_leaderboard_sync, limit)
+
+
+
+
+# ---------------------------------------------------------------------------
+# Confirmation view for !resetdb
+# ---------------------------------------------------------------------------
+
+
+RESETDB_CONFIRM_TIMEOUT_SECONDS = 20
+
+
+class ResetDBConfirmView(discord.ui.View):
+    """Yes/No confirmation prompt shown by !resetdb. interaction_check locks
+    every button to the owner who ran the command, so even if someone else
+    can see the message they can't press Yes/No on the owner's behalf."""
+
+    def __init__(self, owner: discord.Member, timeout: int = RESETDB_CONFIRM_TIMEOUT_SECONDS):
+        super().__init__(timeout=timeout)
+        self.owner = owner
+        self.confirmed: bool = False
+        self.message: discord.Message | None = None
+        self._decided = asyncio.Event()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner.id:
+            await interaction.response.send_message(
+                "Only the person who ran `!resetdb` can respond to this.", ephemeral=True
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="Yes, wipe it", style=discord.ButtonStyle.danger, emoji="⚠️")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.confirmed = True
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(content="⏳ Wiping the database...", view=self)
+        self._decided.set()
+        self.stop()
+
+    @discord.ui.button(label="No, cancel", style=discord.ButtonStyle.secondary, emoji="✋")
+    async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.confirmed = False
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(content="🛑 Cancelled \u2014 no data was touched.", view=self)
+        self._decided.set()
+        self.stop()
+
+    async def on_timeout(self):
+        if self._decided.is_set():
+            return
+        self.confirmed = False
+        for item in self.children:
+            item.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(content="⌛ Confirmation timed out \u2014 no data was touched.", view=self)
+            except discord.HTTPException:
+                pass
 
 
 
@@ -1883,6 +1972,32 @@ async def leaderboard(ctx: commands.Context):
         inline=False,
     )
     await ctx.send(embed=embed)
+
+
+
+
+@bot.command(name="resetdb")
+async def reset_db_command(ctx: commands.Context):
+    if ctx.author.id != BOT_OWNER_ID:
+        await ctx.send("⛔ Only the bot owner can use this command.")
+        return
+
+    view = ResetDBConfirmView(owner=ctx.author)
+    msg = await ctx.send(
+        "⚠️ **This will permanently delete every recorded Blitz and Classic "
+        f"score/timing** from the database at `{BLITZ_DB_PATH}`. This cannot be undone.\n\n"
+        "Are you sure?",
+        view=view,
+    )
+    view.message = msg
+    await view.wait()
+
+    if view.confirmed:
+        blitz_deleted, classic_deleted = await reset_db()
+        await ctx.send(
+            f"✅ Database wiped. Removed **{blitz_deleted}** blitz score(s) and "
+            f"**{classic_deleted}** classic score(s)."
+        )
 
 
 
