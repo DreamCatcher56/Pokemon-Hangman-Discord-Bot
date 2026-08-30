@@ -327,25 +327,6 @@ def _init_db_sync():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_classic_user ON classic_scores(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_classic_score ON classic_scores(score DESC)")
 
-        # Paused Classic games table
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS paused_classic_games (
-                channel_id INTEGER PRIMARY KEY,
-                user_id INTEGER NOT NULL,
-                username TEXT NOT NULL,
-                score INTEGER NOT NULL,
-                current_word TEXT NOT NULL,
-                current_category TEXT NOT NULL,
-                guessed_letters TEXT NOT NULL,
-                wrong_letters TEXT NOT NULL,
-                wrong_guesses INTEGER NOT NULL,
-                max_wrong INTEGER NOT NULL,
-                remaining_time REAL NOT NULL
-            )
-            """
-        )
-
         conn.commit()
     finally:
         conn.close()
@@ -620,134 +601,6 @@ def _get_classic_leaderboard_sync(limit: int) -> list[tuple[str, int, int]]:
 
 async def get_classic_leaderboard(limit: int = LEADERBOARD_SIZE) -> list[tuple[str, int, int]]:
     return await asyncio.to_thread(_get_classic_leaderboard_sync, limit)
-
-
-
-
-# ---------- Paused Classic game helpers ----------
-def _save_paused_game_sync(
-    channel_id: int,
-    user_id: int,
-    username: str,
-    score: int,
-    current_word: str,
-    current_category: str,
-    guessed_letters: set[str],
-    wrong_letters: set[str],
-    wrong_guesses: int,
-    max_wrong: int,
-    remaining_time: float,
-):
-    conn = _get_connection()
-    try:
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO paused_classic_games (
-                channel_id, user_id, username, score,
-                current_word, current_category,
-                guessed_letters, wrong_letters,
-                wrong_guesses, max_wrong, remaining_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                channel_id,
-                user_id,
-                username,
-                score,
-                current_word,
-                current_category,
-                ",".join(sorted(guessed_letters)),
-                ",".join(sorted(wrong_letters)),
-                wrong_guesses,
-                max_wrong,
-                remaining_time,
-            ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-
-
-async def save_paused_game(
-    channel_id: int,
-    user_id: int,
-    username: str,
-    score: int,
-    current_word: str,
-    current_category: str,
-    guessed_letters: set[str],
-    wrong_letters: set[str],
-    wrong_guesses: int,
-    max_wrong: int,
-    remaining_time: float,
-):
-    await asyncio.to_thread(
-        _save_paused_game_sync,
-        channel_id,
-        user_id,
-        username,
-        score,
-        current_word,
-        current_category,
-        guessed_letters,
-        wrong_letters,
-        wrong_guesses,
-        max_wrong,
-        remaining_time,
-    )
-
-
-
-
-def _load_paused_game_sync(channel_id: int):
-    conn = _get_connection()
-    try:
-        row = conn.execute(
-            "SELECT * FROM paused_classic_games WHERE channel_id = ?",
-            (channel_id,),
-        ).fetchone()
-        if not row:
-            return None
-        return {
-            "channel_id": row[0],
-            "user_id": row[1],
-            "username": row[2],
-            "score": row[3],
-            "current_word": row[4],
-            "current_category": row[5],
-            "guessed_letters": set(row[6].split(",")) if row[6] else set(),
-            "wrong_letters": set(row[7].split(",")) if row[7] else set(),
-            "wrong_guesses": row[8],
-            "max_wrong": row[9],
-            "remaining_time": row[10],
-        }
-    finally:
-        conn.close()
-
-
-
-
-async def load_paused_game(channel_id: int):
-    return await asyncio.to_thread(_load_paused_game_sync, channel_id)
-
-
-
-
-def _delete_paused_game_sync(channel_id: int):
-    conn = _get_connection()
-    try:
-        conn.execute("DELETE FROM paused_classic_games WHERE channel_id = ?", (channel_id,))
-        conn.commit()
-    finally:
-        conn.close()
-
-
-
-
-async def delete_paused_game(channel_id: int):
-    await asyncio.to_thread(_delete_paused_game_sync, channel_id)
 
 
 
@@ -1596,16 +1449,8 @@ class BlitzSpeedGame:
 
 
 class ClassicGame:
-    """Solo classic hangman – 7 wrong guesses, 300s per round, no pre‑revealed letters.
-    Supports restoring from a paused state."""
-    def __init__(
-        self,
-        channel: discord.TextChannel,
-        player: discord.Member,
-        word_lists: dict[str, list[str]],
-        # Optional restore parameters
-        restore_data: dict | None = None,
-    ):
+    """Solo classic hangman – 7 wrong guesses, 300s per round, no pre‑revealed letters."""
+    def __init__(self, channel: discord.TextChannel, player: discord.Member, word_lists: dict[str, list[str]]):
         self.channel = channel
         self.player = player
         self.word_lists = word_lists
@@ -1620,18 +1465,6 @@ class ClassicGame:
         self.round_start_time: float | None = None
         self._timeout_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
-        self._remaining_time_override: float | None = None  # used when resuming
-
-        if restore_data:
-            # Restore from saved state
-            self.score = restore_data["score"]
-            self.current_word = restore_data["current_word"]
-            self.current_category = restore_data["current_category"]
-            self.guessed_letters = restore_data["guessed_letters"]
-            self.wrong_letters = restore_data["wrong_letters"]
-            self.wrong_guesses = restore_data["wrong_guesses"]
-            self.max_wrong = restore_data["max_wrong"]
-            self._remaining_time_override = restore_data["remaining_time"]
 
     def render_display(self) -> str:
         return render_word(self.current_word, self.guessed_letters)
@@ -1640,17 +1473,10 @@ class ClassicGame:
         return word_fully_revealed(self.current_word, self.guessed_letters)
 
     async def start_round(self, prior_announcement: str | None = None):
-        # If this is a resumed game, we already have the word and state; we just start the timer.
-        if self.current_word and self.guessed_letters is not None:
-            # Already set – use the stored state
-            pass
-        else:
-            # New game: pick a fresh word
-            self.current_category, self.current_word = pick_word(self.word_lists)
-            self.guessed_letters = set()
-            self.wrong_letters = set()
-            self.wrong_guesses = 0
-
+        self.current_category, self.current_word = pick_word(self.word_lists)
+        self.guessed_letters = set()
+        self.wrong_letters = set()
+        self.wrong_guesses = 0
         self.round_start_time = time.monotonic()
 
         embed = discord.Embed(
@@ -1663,12 +1489,7 @@ class ClassicGame:
             value=f"{self.wrong_guesses}/{self.max_wrong}\nLetters: {self.format_wrong_letters()}",
             inline=False,
         )
-        if self._remaining_time_override is not None:
-            remaining_display = f"{self._remaining_time_override:.1f}s remaining"
-            footer_text = f"Resumed game – {remaining_display}. Guess a letter or the full word."
-        else:
-            footer_text = f"Guess a letter or the full word. {CLASSIC_ROUND_TIMEOUT}s per round."
-        embed.set_footer(text=footer_text)
+        embed.set_footer(text=f"Guess a letter or the full word. {CLASSIC_ROUND_TIMEOUT}s per round.")
 
         if prior_announcement:
             await self.channel.send(prior_announcement)
@@ -1676,22 +1497,14 @@ class ClassicGame:
 
         if self._timeout_task:
             self._timeout_task.cancel()
-
-        # Determine timeout duration
-        if self._remaining_time_override is not None:
-            timeout_duration = max(0.1, self._remaining_time_override)
-            self._remaining_time_override = None  # consume it
-        else:
-            timeout_duration = CLASSIC_ROUND_TIMEOUT
-
-        self._timeout_task = asyncio.create_task(self._round_timeout(timeout_duration))
+        self._timeout_task = asyncio.create_task(self._round_timeout())
 
     def format_wrong_letters(self) -> str:
         return ", ".join(sorted(self.wrong_letters)) if self.wrong_letters else "None yet"
 
-    async def _round_timeout(self, duration: float):
+    async def _round_timeout(self):
         try:
-            await asyncio.sleep(duration)
+            await asyncio.sleep(CLASSIC_ROUND_TIMEOUT)
         except asyncio.CancelledError:
             return
         async with self._lock:
@@ -1759,12 +1572,6 @@ class ClassicGame:
     async def _advance(self, prior_announcement: str | None = None):
         if self._timeout_task:
             self._timeout_task.cancel()
-        # Reset for next round
-        self.current_word = ""
-        self.guessed_letters = set()
-        self.wrong_letters = set()
-        self.wrong_guesses = 0
-        self._remaining_time_override = None
         await self.start_round(prior_announcement)
 
     async def end_game(self, reason: str | None = None, failed: bool = False):
@@ -1796,41 +1603,6 @@ class ClassicGame:
             self._timeout_task.cancel()
         active_classic_games.pop(self.channel.id, None)
         await self.end_game(reason="🛑 Game stopped by player.", failed=False)
-
-    async def pause(self, paused_by: discord.Member) -> bool:
-        """Pause the current game, saving its state to the database.
-        Returns True on success, False if the user is not the player."""
-        if paused_by.id != self.player.id:
-            return False
-        if not self.active:
-            return False
-        # Compute remaining time
-        if self.round_start_time is not None:
-            elapsed = time.monotonic() - self.round_start_time
-            remaining = max(0.0, CLASSIC_ROUND_TIMEOUT - elapsed)
-        else:
-            remaining = CLASSIC_ROUND_TIMEOUT
-
-        # Save to DB
-        await save_paused_game(
-            channel_id=self.channel.id,
-            user_id=self.player.id,
-            username=self.player.display_name,
-            score=self.score,
-            current_word=self.current_word,
-            current_category=self.current_category,
-            guessed_letters=self.guessed_letters,
-            wrong_letters=self.wrong_letters,
-            wrong_guesses=self.wrong_guesses,
-            max_wrong=self.max_wrong,
-            remaining_time=remaining,
-        )
-        # Cancel timeout and deactivate
-        self.active = False
-        if self._timeout_task and self._timeout_task is not asyncio.current_task():
-            self._timeout_task.cancel()
-        active_classic_games.pop(self.channel.id, None)
-        return True
 
 
 
@@ -2120,15 +1892,6 @@ async def classic_start(ctx: commands.Context):
         await ctx.send("A game is already running in this channel! Finish it before starting a new one.")
         return
 
-    # Check for a paused game in this channel – if found, ask the user to resume instead.
-    paused = await load_paused_game(ctx.channel.id)
-    if paused:
-        await ctx.send(
-            f"⚠️ There is a paused game in this channel (started by **{paused['username']}**). "
-            f"Use `!resume` to continue it, or `!pause` again to overwrite (if you're the same player)."
-        )
-        return
-
     try:
         word_lists = load_word_lists()  # uses all four categories
     except (FileNotFoundError, ValueError) as e:
@@ -2139,102 +1902,6 @@ async def classic_start(ctx: commands.Context):
     active_classic_games[ctx.channel.id] = game
     await ctx.send(f"🧩 **{ctx.author.display_name}** started a Classic Hangman game! You have 7 wrong guesses per word and {CLASSIC_ROUND_TIMEOUT}s per round. Good luck!")
     await game.start_round()
-
-
-
-
-@bot.command(name="pause")
-async def pause_classic(ctx: commands.Context):
-    """Pause the current Classic game. Only the player who started the game can pause."""
-    game = active_classic_games.get(ctx.channel.id)
-    if not game:
-        # Check if there's already a paused game in this channel – maybe the user wants to overwrite?
-        paused = await load_paused_game(ctx.channel.id)
-        if paused:
-            if paused["user_id"] == ctx.author.id:
-                await ctx.send(
-                    "You already have a paused game in this channel. "
-                    "Use `!resume` to continue, or `!pause` again to overwrite the paused state."
-                )
-            else:
-                await ctx.send(
-                    f"There is already a paused game in this channel (started by **{paused['username']}**). "
-                    f"You cannot pause a different player's game."
-                )
-            return
-        await ctx.send("No Classic game is currently running in this channel.")
-        return
-
-    if ctx.author.id != game.player.id:
-        await ctx.send("Only the player who started the Classic game can pause it.")
-        return
-
-    # Pause the game
-    success = await game.pause(ctx.author)
-    if success:
-        await ctx.send(
-            "⏸️ Classic game paused! Your progress has been saved. Use `!resume` to continue."
-        )
-    else:
-        await ctx.send("Could not pause the game – it may already be inactive.")
-
-
-
-
-@bot.command(name="resume")
-async def resume_classic(ctx: commands.Context):
-    """Resume a paused Classic game in this channel."""
-    # Check if there is already an active game
-    if ctx.channel.id in active_games or ctx.channel.id in active_blitz_games or ctx.channel.id in active_classic_games:
-        await ctx.send("There is already an active game in this channel. Finish or stop it before resuming.")
-        return
-
-    # Load paused game from DB
-    paused = await load_paused_game(ctx.channel.id)
-    if not paused:
-        await ctx.send("No paused Classic game found in this channel.")
-        return
-
-    # Check user
-    if paused["user_id"] != ctx.author.id:
-        await ctx.send(
-            f"This paused game belongs to **{paused['username']}**. You cannot resume it."
-        )
-        return
-
-    # Create a new ClassicGame with the restored data
-    # We need word_lists – load them (same as classic_start)
-    try:
-        word_lists = load_word_lists()
-    except (FileNotFoundError, ValueError) as e:
-        await ctx.send(f"⚠️ Can't resume the game: {e}")
-        return
-
-    # Build restore data (dict with the required keys)
-    restore_data = {
-        "score": paused["score"],
-        "current_word": paused["current_word"],
-        "current_category": paused["current_category"],
-        "guessed_letters": paused["guessed_letters"],
-        "wrong_letters": paused["wrong_letters"],
-        "wrong_guesses": paused["wrong_guesses"],
-        "max_wrong": paused["max_wrong"],
-        "remaining_time": paused["remaining_time"],
-    }
-
-    game = ClassicGame(ctx.channel, ctx.author, word_lists, restore_data=restore_data)
-    active_classic_games[ctx.channel.id] = game
-
-    # Delete the paused entry from DB
-    await delete_paused_game(ctx.channel.id)
-
-    # Start the round – this will show the restored word and state, and start the timer with the remaining time
-    await ctx.send(
-        f"🔄 Resuming Classic game for **{ctx.author.display_name}**! "
-        f"You have **{restore_data['remaining_time']:.1f}s** left on this word. "
-        f"Current streak: **{restore_data['score']}** word(s). Good luck!"
-    )
-    await game.start_round(prior_announcement=None)  # start_round will display the embed
 
 
 
