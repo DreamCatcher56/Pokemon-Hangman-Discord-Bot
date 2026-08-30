@@ -116,6 +116,12 @@ active_blitz_games: dict[int, "BlitzSpeedGame"] = {}
 # channel_id -> ClassicGame
 active_classic_games: dict[int, "ClassicGame"] = {}
 
+# channel_id -> {user_id: paused-state snapshot dict}
+# Lets multiple players each have their own paused classic game on hold in a
+# given channel (and a single player can hold paused games in several
+# different channels at once).
+paused_classic_games: dict[int, dict[int, dict]] = {}
+
 
 
 def fire_and_forget(coro) -> asyncio.Task:
@@ -1502,9 +1508,9 @@ class ClassicGame:
     def format_wrong_letters(self) -> str:
         return ", ".join(sorted(self.wrong_letters)) if self.wrong_letters else "None yet"
 
-    async def _round_timeout(self):
+    async def _round_timeout(self, duration: float = CLASSIC_ROUND_TIMEOUT):
         try:
-            await asyncio.sleep(CLASSIC_ROUND_TIMEOUT)
+            await asyncio.sleep(duration)
         except asyncio.CancelledError:
             return
         async with self._lock:
@@ -1603,6 +1609,71 @@ class ClassicGame:
             self._timeout_task.cancel()
         active_classic_games.pop(self.channel.id, None)
         await self.end_game(reason="🛑 Game stopped by player.", failed=False)
+
+    async def pause(self) -> dict | None:
+        """Freezes the round in place and returns a snapshot of everything
+        needed to pick it back up later with !resume: the running score
+        (streak), how many seconds were left in the round, the current
+        word/category with correct and incorrect guesses so far, and the
+        channel the game lives in. Returns None if the game had already
+        ended right as the pause was requested (e.g. it timed out a moment
+        earlier), in which case there is nothing to pause.
+        """
+        async with self._lock:
+            if not self.active:
+                return None
+
+            if self._timeout_task and self._timeout_task is not asyncio.current_task():
+                self._timeout_task.cancel()
+
+            self.active = False
+            active_classic_games.pop(self.channel.id, None)
+
+            elapsed = (
+                time.monotonic() - self.round_start_time
+                if self.round_start_time is not None
+                else 0.0
+            )
+            seconds_left = max(0.0, CLASSIC_ROUND_TIMEOUT - elapsed)
+
+            return {
+                "channel_id": self.channel.id,
+                "player": self.player,
+                "word_lists": self.word_lists,
+                "score": self.score,
+                "current_word": self.current_word,
+                "current_category": self.current_category,
+                "guessed_letters": set(self.guessed_letters),
+                "wrong_letters": set(self.wrong_letters),
+                "wrong_guesses": self.wrong_guesses,
+                "seconds_left": seconds_left,
+            }
+
+    async def resume_round(self, seconds_left: float, welcome_note: str):
+        """Re-announces the in-progress round exactly as it was left (word
+        display with correct guesses filled in, wrong guesses, streak, and
+        time remaining) and restarts the round timer for whatever time was
+        left when it was paused.
+        """
+        embed = discord.Embed(
+            title="🧩 Classic Hangman — Resumed",
+            description=f"Category: **{self.current_category}**\n\n`{self.render_display()}`",
+            color=discord.Color.blue(),
+        )
+        embed.add_field(
+            name="Wrong guesses",
+            value=f"{self.wrong_guesses}/{self.max_wrong}\nLetters: {self.format_wrong_letters()}",
+            inline=False,
+        )
+        embed.add_field(name="Current streak", value=f"{self.score} word{'s' if self.score != 1 else ''}", inline=False)
+        embed.set_footer(text=f"{int(seconds_left)}s left in this round. Guess a letter or the full word.")
+
+        await self.channel.send(welcome_note)
+        await self.channel.send(embed=embed)
+
+        if self._timeout_task:
+            self._timeout_task.cancel()
+        self._timeout_task = asyncio.create_task(self._round_timeout(seconds_left))
 
 
 
@@ -1902,6 +1973,70 @@ async def classic_start(ctx: commands.Context):
     active_classic_games[ctx.channel.id] = game
     await ctx.send(f"🧩 **{ctx.author.display_name}** started a Classic Hangman game! You have 7 wrong guesses per word and {CLASSIC_ROUND_TIMEOUT}s per round. Good luck!")
     await game.start_round()
+
+
+
+
+@bot.command(name="pause")
+async def classic_pause(ctx: commands.Context):
+    classic = active_classic_games.get(ctx.channel.id)
+    if not classic or not classic.active:
+        await ctx.send("There's no active classic game in this channel to pause.")
+        return
+    if ctx.author.id != classic.player.id:
+        await ctx.send("Only the player who started the classic game can pause it.")
+        return
+
+    snapshot = await classic.pause()
+    if snapshot is None:
+        # Round ended (e.g. timed out) in the instant before the pause landed.
+        await ctx.send("That game just ended — nothing left to pause.")
+        return
+
+    paused_classic_games.setdefault(ctx.channel.id, {})[ctx.author.id] = snapshot
+    word_count = snapshot["score"]
+    await ctx.send(
+        f"⏸️ **{ctx.author.display_name}**, your Classic Hangman game is paused "
+        f"with **{word_count}** word{'s' if word_count != 1 else ''} guessed so far. "
+        f"Type `!resume` in this channel whenever you're ready to pick back up."
+    )
+
+
+@bot.command(name="resume")
+async def classic_resume(ctx: commands.Context):
+    channel_paused = paused_classic_games.get(ctx.channel.id)
+    snapshot = channel_paused.pop(ctx.author.id, None) if channel_paused else None
+
+    if not snapshot:
+        await ctx.send(f"{ctx.author.mention}, you don't have a paused classic game on hold in this channel.")
+        return
+
+    # Clean up an emptied per-channel entry.
+    if channel_paused is not None and not channel_paused:
+        paused_classic_games.pop(ctx.channel.id, None)
+
+    if ctx.channel.id in active_games or ctx.channel.id in active_blitz_games or ctx.channel.id in active_classic_games:
+        # Can't resume into a channel that's mid-game right now — put the
+        # pause back so the player can try again once it's free.
+        paused_classic_games.setdefault(ctx.channel.id, {})[ctx.author.id] = snapshot
+        await ctx.send("Another game is currently running in this channel — try `!resume` again once it's finished.")
+        return
+
+    game = ClassicGame(ctx.channel, snapshot["player"], snapshot["word_lists"])
+    game.score = snapshot["score"]
+    game.current_word = snapshot["current_word"]
+    game.current_category = snapshot["current_category"]
+    game.guessed_letters = set(snapshot["guessed_letters"])
+    game.wrong_letters = set(snapshot["wrong_letters"])
+    game.wrong_guesses = snapshot["wrong_guesses"]
+    seconds_left = snapshot["seconds_left"]
+    game.round_start_time = time.monotonic() - (CLASSIC_ROUND_TIMEOUT - seconds_left)
+
+    active_classic_games[ctx.channel.id] = game
+    await game.resume_round(
+        seconds_left,
+        welcome_note=f"▶️ Welcome back, **{ctx.author.display_name}**! Resuming your Classic Hangman game.",
+    )
 
 
 
