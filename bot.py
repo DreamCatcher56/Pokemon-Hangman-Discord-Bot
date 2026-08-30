@@ -51,7 +51,7 @@ MIN_ROUNDS = 1
 MAX_ROUNDS = 20
 JOIN_WINDOW_SECONDS = 12
 ROUND_TIMEOUT_SECONDS = 100          # for regular multiplayer hangman
-CLASSIC_ROUND_TIMEOUT = 300          # for classic solo hangman (CHANGE: increased from 150)
+CLASSIC_ROUND_TIMEOUT = 100          # for classic solo hangman (CHANGE: reduced from 300)
 VOWELS = set("AEIOU")
 CONSONANTS = set("BCDFGHJKLMNPQRSTVWXYZ")
 
@@ -169,6 +169,22 @@ def pick_word(word_lists: dict[str, list[str]]) -> tuple[str, str]:
     category = random.choice(list(word_lists.keys()))
     word = random.choice(word_lists[category])
     return category, word
+
+
+
+
+def filter_min_letters(word_lists: dict[str, list[str]], min_letters: int) -> dict[str, list[str]]:
+    """Returns a copy of word_lists with words that have `min_letters` or
+    fewer letters removed (only alphabetic characters count toward the
+    length, so spaces/apostrophes/hyphens don't). If filtering would empty
+    out a category entirely, that category is left unfiltered rather than
+    breaking word selection.
+    """
+    filtered = {}
+    for category, words in word_lists.items():
+        kept = [w for w in words if sum(ch.isalpha() for ch in w) > min_letters]
+        filtered[category] = kept if kept else words
+    return filtered
 
 
 
@@ -1942,6 +1958,11 @@ async def blitz_start(ctx: commands.Context):
             "try again once it's done."
         )
         return
+
+    if difficulty == "hard":
+        # Hard mode excludes short (<=4 letter) words to keep it from being
+        # trivially easy.
+        word_lists = filter_min_letters(word_lists, 4)
 
     game = BlitzSpeedGame(ctx.channel, ctx.author, word_lists, difficulty=difficulty)
     active_blitz_games[ctx.channel.id] = game
