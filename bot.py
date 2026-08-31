@@ -52,7 +52,7 @@ MIN_ROUNDS = 1
 MAX_ROUNDS = 20
 JOIN_WINDOW_SECONDS = 12
 ROUND_TIMEOUT_SECONDS = 100          # for regular multiplayer hangman
-CLASSIC_ROUND_TIMEOUT = 90           # for classic solo hangman (CHANGED: 100 -> 120)
+CLASSIC_ROUND_TIMEOUT = 120           # for classic solo hangman (CHANGED: 100 -> 120)
 CLASSIC_ROUND_WARNING_SECONDS = 20    # send a "time's running out" heads-up this many seconds before the timeout
 VOWELS = set("AEIOU")
 CONSONANTS = set("BCDFGHJKLMNPQRSTVWXYZ")
@@ -1875,6 +1875,15 @@ async def hangman_start(ctx: commands.Context, rounds: int = DEFAULT_ROUNDS_PER_
     )
     await view.wait()
 
+    if ctx.channel.id in active_games or ctx.channel.id in active_blitz_games or ctx.channel.id in active_classic_games:
+        # Someone else's game slipped in and started while players were
+        # picking a category / joining this one — don't stomp on it.
+        await ctx.send(
+            "Another game started in this channel while this one was setting up — "
+            "try `!hangman` again once it's done."
+        )
+        return
+
     players = view.players
     game = HangmanGame(ctx.channel, players, word_lists, host=ctx.author, rounds_per_game=rounds)
     active_games[ctx.channel.id] = game
@@ -1933,6 +1942,15 @@ async def _start_category_hangman(
         view=view,
     )
     await view.wait()
+
+    if ctx.channel.id in active_games or ctx.channel.id in active_blitz_games or ctx.channel.id in active_classic_games:
+        # Someone else's game slipped in and started while players were
+        # joining this one — don't stomp on it.
+        await ctx.send(
+            f"Another game started in this channel while this one was setting up — "
+            f"try `!{command_name}` again once it's done."
+        )
+        return
 
     players = view.players
     game = HangmanGame(ctx.channel, players, word_lists, host=ctx.author, rounds_per_game=rounds)
