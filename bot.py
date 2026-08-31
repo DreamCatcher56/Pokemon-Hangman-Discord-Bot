@@ -2114,6 +2114,13 @@ async def classic_start(ctx: commands.Context):
         await ctx.send("A game is already running in this channel! Finish it before starting a new one.")
         return
 
+    if ctx.channel.id in paused_classic_games and ctx.author.id in paused_classic_games[ctx.channel.id]:
+        await ctx.send(
+            f"{ctx.author.mention}, you already have a paused Classic Hangman game in this channel! "
+            f"Use `!resume` to pick it back up, or you'll lose your progress."
+        )
+        return
+
     try:
         word_lists = load_word_lists()  # uses all four categories
     except (FileNotFoundError, ValueError) as e:
