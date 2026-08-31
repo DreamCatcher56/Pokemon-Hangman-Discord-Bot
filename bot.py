@@ -8,6 +8,7 @@ abilities, moves, or items pulled from text files.
 
 
 import os
+import json
 import random
 import asyncio
 import time
@@ -51,7 +52,8 @@ MIN_ROUNDS = 1
 MAX_ROUNDS = 20
 JOIN_WINDOW_SECONDS = 12
 ROUND_TIMEOUT_SECONDS = 100          # for regular multiplayer hangman
-CLASSIC_ROUND_TIMEOUT = 100          # for classic solo hangman (CHANGE: reduced from 300)
+CLASSIC_ROUND_TIMEOUT = 120           # for classic solo hangman (CHANGED: 100 -> 120)
+CLASSIC_ROUND_WARNING_SECONDS = 20    # send a "time's running out" heads-up this many seconds before the timeout
 VOWELS = set("AEIOU")
 CONSONANTS = set("BCDFGHJKLMNPQRSTVWXYZ")
 
@@ -98,6 +100,10 @@ LEADERBOARD_SIZE = 10
 # via the BLITZ_DB_PATH env var, or scores won't survive a redeploy/restart.
 BLITZ_DB_PATH = os.getenv("BLITZ_DB_PATH", "data/blitz_scores.db")
 
+# Same idea, but for in-progress paused Classic games — point it at the same
+# volume via PAUSED_GAMES_PATH, or paused games won't survive a crash/redeploy.
+PAUSED_GAMES_PATH = os.getenv("PAUSED_GAMES_PATH", "data/paused_classic_games.json")
+
 # Only this Discord user ID may run the destructive !resetdb command.
 BOT_OWNER_ID = 1239880146639388695
 
@@ -121,6 +127,70 @@ active_classic_games: dict[int, "ClassicGame"] = {}
 # given channel (and a single player can hold paused games in several
 # different channels at once).
 paused_classic_games: dict[int, dict[int, dict]] = {}
+
+
+def _paused_games_to_json_dict() -> dict:
+    """Converts paused_classic_games into a plain, JSON-serializable dict
+    (str keys, sets turned into lists) for writing to disk."""
+    return {
+        str(channel_id): {
+            str(user_id): {
+                **{k: v for k, v in snapshot.items() if k not in ("guessed_letters", "wrong_letters")},
+                "guessed_letters": sorted(snapshot["guessed_letters"]),
+                "wrong_letters": sorted(snapshot["wrong_letters"]),
+            }
+            for user_id, snapshot in per_user.items()
+        }
+        for channel_id, per_user in paused_classic_games.items()
+    }
+
+
+def _save_paused_games_sync() -> None:
+    games_dir = os.path.dirname(PAUSED_GAMES_PATH)
+    if games_dir:
+        os.makedirs(games_dir, exist_ok=True)
+    payload = _paused_games_to_json_dict()
+    # Write to a temp file and rename over the target so a crash mid-write
+    # can never leave behind a truncated/corrupt JSON file.
+    tmp_path = f"{PAUSED_GAMES_PATH}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+    os.replace(tmp_path, PAUSED_GAMES_PATH)
+
+
+async def save_paused_games() -> None:
+    """Persists the current paused_classic_games state to disk so paused
+    games survive a bot crash or redeploy. Call this any time
+    paused_classic_games is mutated (a game is paused, resumed, or put
+    back after a failed resume)."""
+    try:
+        await asyncio.to_thread(_save_paused_games_sync)
+    except OSError as e:
+        print(f"⚠️ Failed to save paused classic games to disk: {e!r}")
+
+
+def load_paused_games() -> None:
+    """Loads any paused classic games left over from before a crash/restart
+    back into paused_classic_games. Safe to call even if the file doesn't
+    exist yet. Meant to be called once at startup, before the bot connects."""
+    if not os.path.exists(PAUSED_GAMES_PATH):
+        return
+    try:
+        with open(PAUSED_GAMES_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"⚠️ Failed to load paused classic games from disk: {e!r}")
+        return
+
+    restored = 0
+    for channel_id_str, per_user in raw.items():
+        for user_id_str, snapshot in per_user.items():
+            snapshot["guessed_letters"] = set(snapshot.get("guessed_letters", []))
+            snapshot["wrong_letters"] = set(snapshot.get("wrong_letters", []))
+            paused_classic_games.setdefault(int(channel_id_str), {})[int(user_id_str)] = snapshot
+            restored += 1
+    if restored:
+        print(f"🔁 Restored {restored} paused classic game(s) from {os.path.abspath(PAUSED_GAMES_PATH)}")
 
 
 
@@ -1485,7 +1555,16 @@ class ClassicGame:
         self.wrong_guesses = 0
         self.max_wrong = 7  # CHANGED: from 6 to 7
         self.round_start_time: float | None = None
+        # True once the player has made at least one guess (right or wrong)
+        # in the current round. Reset to False every time a fresh round
+        # starts. Used to only allow !pause at the very start of a round.
+        self.has_guessed_this_round = False
         self._timeout_task: asyncio.Task | None = None
+        self._warning_task: asyncio.Task | None = None
+        # Bumped every time a round's timers are (re)started. Lets the
+        # warning/timeout tasks tell, once they wake back up, whether the
+        # round they were scheduled for is still the current one.
+        self._round_id = 0
         self._lock = asyncio.Lock()
 
     def render_display(self) -> str:
@@ -1500,6 +1579,7 @@ class ClassicGame:
         self.wrong_letters = set()
         self.wrong_guesses = 0
         self.round_start_time = time.monotonic()
+        self.has_guessed_this_round = False
 
         embed = discord.Embed(
             title="Classic Hangman",
@@ -1517,22 +1597,67 @@ class ClassicGame:
             await self.channel.send(prior_announcement)
         await self.channel.send(embed=embed)
 
-        if self._timeout_task:
-            self._timeout_task.cancel()
-        self._timeout_task = asyncio.create_task(self._round_timeout())
+        self._schedule_round_timers(CLASSIC_ROUND_TIMEOUT)
 
     def format_wrong_letters(self) -> str:
         return ", ".join(sorted(self.wrong_letters)) if self.wrong_letters else "None yet"
 
-    async def _round_timeout(self, duration: float = CLASSIC_ROUND_TIMEOUT):
+    def _schedule_round_timers(self, duration: float) -> None:
+        """(Re)starts the round's timeout task and, if there's more than
+        CLASSIC_ROUND_WARNING_SECONDS on the clock, its "time's running
+        out" warning task. Cancels whatever timers were running before
+        (from the previous round, or an earlier call for this same round)
+        and bumps _round_id so a still-in-flight task from before this
+        call can recognize it's stale once it wakes back up.
+        """
+        self._cancel_round_timers()
+
+        self._round_id += 1
+        round_id = self._round_id
+
+        self._timeout_task = asyncio.create_task(self._round_timeout(duration, round_id))
+
+        warning_delay = duration - CLASSIC_ROUND_WARNING_SECONDS
+        if warning_delay > 0:
+            self._warning_task = asyncio.create_task(self._round_warning(warning_delay, round_id))
+        else:
+            # Already at or under the warning threshold (e.g. resuming a
+            # round with <20s left) — nothing useful to warn about.
+            self._warning_task = None
+
+    def _cancel_round_timers(self) -> None:
+        if self._timeout_task and self._timeout_task is not asyncio.current_task():
+            self._timeout_task.cancel()
+        if self._warning_task and self._warning_task is not asyncio.current_task():
+            self._warning_task.cancel()
+
+    async def _round_timeout(self, duration: float = CLASSIC_ROUND_TIMEOUT, round_id: int | None = None):
         try:
             await asyncio.sleep(duration)
         except asyncio.CancelledError:
             return
         async with self._lock:
-            if not self.active:
+            if not self.active or (round_id is not None and round_id != self._round_id):
                 return
             await self.end_game(reason="⏰ Time's up! You took too long on a word.", failed=True)
+
+    async def _round_warning(self, delay: float, round_id: int):
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        async with self._lock:
+            # Safeguard: if the player guessed the word (or busted out) at
+            # basically the same instant this task woke up, the round will
+            # already have moved on or the game will have ended by the time
+            # we get the lock — in that case _round_id will no longer match
+            # (or the game will be inactive), so skip sending a now-stale
+            # warning instead of stepping on the guess/end-of-round message.
+            if not self.active or round_id != self._round_id:
+                return
+            await self.channel.send(
+                f"⌛ **{self.player.display_name}**, {CLASSIC_ROUND_WARNING_SECONDS} seconds left on this word!"
+            )
 
     async def handle_guess(self, message: discord.Message):
         if not self.active or message.author.id != self.player.id:
@@ -1544,6 +1669,7 @@ class ClassicGame:
         async with self._lock:
             if not self.active:
                 return
+            self.has_guessed_this_round = True
             if len(content) == 1:
                 await self._handle_letter_guess(content.upper())
             else:
@@ -1592,14 +1718,12 @@ class ClassicGame:
                 )
 
     async def _advance(self, prior_announcement: str | None = None):
-        if self._timeout_task:
-            self._timeout_task.cancel()
+        self._cancel_round_timers()
         await self.start_round(prior_announcement)
 
     async def end_game(self, reason: str | None = None, failed: bool = False):
         self.active = False
-        if self._timeout_task and self._timeout_task is not asyncio.current_task():
-            self._timeout_task.cancel()
+        self._cancel_round_timers()
         active_classic_games.pop(self.channel.id, None)
 
         pb, games_played, rank = await record_classic_score(
@@ -1621,26 +1745,30 @@ class ClassicGame:
             await self.channel.send("Only the player who started the game can stop it.")
             return
         self.active = False
-        if self._timeout_task and self._timeout_task is not asyncio.current_task():
-            self._timeout_task.cancel()
+        self._cancel_round_timers()
         active_classic_games.pop(self.channel.id, None)
         await self.end_game(reason="🛑 Game stopped by player.", failed=False)
 
-    async def pause(self) -> dict | None:
+    async def pause(self) -> dict | str | None:
         """Freezes the round in place and returns a snapshot of everything
         needed to pick it back up later with !resume: the running score
-        (streak), how many seconds were left in the round, the current
-        word/category with correct and incorrect guesses so far, and the
-        channel the game lives in. Returns None if the game had already
-        ended right as the pause was requested (e.g. it timed out a moment
-        earlier), in which case there is nothing to pause.
+        (streak), how many seconds were left in the round, and the current
+        word/category with correct and incorrect guesses so far. Returns
+        None if the game had already ended right as the pause was requested
+        (e.g. it timed out a moment earlier), in which case there is nothing
+        to pause. Returns the string "already_guessed" if the player has
+        already made a guess (right or wrong) this round — pausing is only
+        allowed at the very start of a round, before any guess has been
+        made, to prevent using pauses to dodge the round timer mid-guess.
         """
         async with self._lock:
             if not self.active:
                 return None
 
-            if self._timeout_task and self._timeout_task is not asyncio.current_task():
-                self._timeout_task.cancel()
+            if self.has_guessed_this_round:
+                return "already_guessed"
+
+            self._cancel_round_timers()
 
             self.active = False
             active_classic_games.pop(self.channel.id, None)
@@ -1652,10 +1780,14 @@ class ClassicGame:
             )
             seconds_left = max(0.0, CLASSIC_ROUND_TIMEOUT - elapsed)
 
+            # Note: deliberately omits "player" (a discord.Member) and
+            # "word_lists" so this snapshot is plain-JSON-serializable and
+            # can be written straight to disk for crash recovery. !resume
+            # always runs as the paused player themselves (the snapshot is
+            # keyed by their user ID), and word_lists is just reloaded from
+            # disk on resume, so neither needs to be stored.
             return {
                 "channel_id": self.channel.id,
-                "player": self.player,
-                "word_lists": self.word_lists,
                 "score": self.score,
                 "current_word": self.current_word,
                 "current_category": self.current_category,
@@ -1687,9 +1819,7 @@ class ClassicGame:
         await self.channel.send(welcome_note)
         await self.channel.send(embed=embed)
 
-        if self._timeout_task:
-            self._timeout_task.cancel()
-        self._timeout_task = asyncio.create_task(self._round_timeout(seconds_left))
+        self._schedule_round_timers(seconds_left)
 
 
 
@@ -2013,8 +2143,16 @@ async def classic_pause(ctx: commands.Context):
         # Round ended (e.g. timed out) in the instant before the pause landed.
         await ctx.send("That game just ended — nothing left to pause.")
         return
+    if snapshot == "already_guessed":
+        await ctx.send(
+            "⏸️ In order to prevent abuse of the pause function, it is only usable "
+            "at the start of a round — before you've made any guesses. Wait for the "
+            "next word to pause."
+        )
+        return
 
     paused_classic_games.setdefault(ctx.channel.id, {})[ctx.author.id] = snapshot
+    await save_paused_games()
     word_count = snapshot["score"]
     await ctx.send(
         f"⏸️ **{ctx.author.display_name}**, your Classic Hangman game is paused "
@@ -2035,15 +2173,26 @@ async def classic_resume(ctx: commands.Context):
     # Clean up an emptied per-channel entry.
     if channel_paused is not None and not channel_paused:
         paused_classic_games.pop(ctx.channel.id, None)
+    await save_paused_games()
 
     if ctx.channel.id in active_games or ctx.channel.id in active_blitz_games or ctx.channel.id in active_classic_games:
         # Can't resume into a channel that's mid-game right now — put the
         # pause back so the player can try again once it's free.
         paused_classic_games.setdefault(ctx.channel.id, {})[ctx.author.id] = snapshot
+        await save_paused_games()
         await ctx.send("Another game is currently running in this channel — try `!resume` again once it's finished.")
         return
 
-    game = ClassicGame(ctx.channel, snapshot["player"], snapshot["word_lists"])
+    try:
+        word_lists = load_word_lists()  # uses all four categories, same as !classic
+    except (FileNotFoundError, ValueError) as e:
+        # Put the pause back so the player can try again once word data is fixed.
+        paused_classic_games.setdefault(ctx.channel.id, {})[ctx.author.id] = snapshot
+        await save_paused_games()
+        await ctx.send(f"⚠️ Can't resume: {e}")
+        return
+
+    game = ClassicGame(ctx.channel, ctx.author, word_lists)
     game.score = snapshot["score"]
     game.current_word = snapshot["current_word"]
     game.current_category = snapshot["current_category"]
@@ -2191,6 +2340,7 @@ async def on_message(message: discord.Message):
 async def on_ready():
     print(f"Logged in as {bot.user} (id: {bot.user.id})")
     print(f"Blitz leaderboard DB: {os.path.abspath(BLITZ_DB_PATH)}")
+    print(f"Paused classic games file: {os.path.abspath(PAUSED_GAMES_PATH)}")
     print("Pokemon Hangman bot is ready. Use !hangman in a server to start a game.")
 
 
@@ -2198,6 +2348,7 @@ async def on_ready():
 
 if __name__ == "__main__":
     init_db()
+    load_paused_games()
     token = os.getenv("DISCORD_BOT_TOKEN")
     if not token:
         raise SystemExit(
