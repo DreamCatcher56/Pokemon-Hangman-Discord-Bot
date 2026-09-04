@@ -52,7 +52,7 @@ MIN_ROUNDS = 1
 MAX_ROUNDS = 20
 JOIN_WINDOW_SECONDS = 12
 ROUND_TIMEOUT_SECONDS = 100          # for regular multiplayer hangman
-CLASSIC_ROUND_TIMEOUT = 80           
+CLASSIC_ROUND_TIMEOUT = 65           
 CLASSIC_ROUND_WARNING_SECONDS = 20    # send a "time's running out" heads-up this many seconds before the timeout
 VOWELS = set("AEIOU")
 CONSONANTS = set("BCDFGHJKLMNPQRSTVWXYZ")
@@ -1541,7 +1541,7 @@ class BlitzSpeedGame:
 
 
 class ClassicGame:
-    """Solo classic hangman – 7 wrong guesses, 300s per round, no pre‑revealed letters."""
+    """Solo classic hangman – 6 wrong guesses, 300s per round, no pre‑revealed letters."""
     def __init__(self, channel: discord.TextChannel, player: discord.Member, word_lists: dict[str, list[str]]):
         self.channel = channel
         self.player = player
@@ -1553,7 +1553,7 @@ class ClassicGame:
         self.guessed_letters: set[str] = set()
         self.wrong_letters: set[str] = set()
         self.wrong_guesses = 0
-        self.max_wrong = 7  # CHANGED: from 6 to 7
+        self.max_wrong = 6
         self.round_start_time: float | None = None
         # True once the player has made at least one guess (right or wrong)
         # in the current round. Reset to False every time a fresh round
@@ -2147,7 +2147,7 @@ async def classic_start(ctx: commands.Context):
 
     game = ClassicGame(ctx.channel, ctx.author, word_lists)
     active_classic_games[ctx.channel.id] = game
-    await ctx.send(f"🧩 **{ctx.author.display_name}** started a Classic Hangman game! You have 7 wrong guesses per word and {CLASSIC_ROUND_TIMEOUT}s per round. Good luck!")
+    await ctx.send(f"🧩 **{ctx.author.display_name}** started a Classic Hangman game! You have 6 wrong guesses per word and {CLASSIC_ROUND_TIMEOUT}s per round. Good luck!")
     await game.start_round()
 
 
