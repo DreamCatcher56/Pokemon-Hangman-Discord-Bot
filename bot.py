@@ -52,7 +52,8 @@ MIN_ROUNDS = 1
 MAX_ROUNDS = 20
 JOIN_WINDOW_SECONDS = 12
 ROUND_TIMEOUT_SECONDS = 100          # for regular multiplayer hangman
-CLASSIC_ROUND_TIMEOUT = 65           
+CLASSIC_ROUND_TIMEOUT = 60           
+CLASSIC_LETTER_BONUS_SECONDS = 2  # extra time added to the clock per correct letter guess
 CLASSIC_ROUND_WARNING_SECONDS = 20    # send a "time's running out" heads-up this many seconds before the timeout
 VOWELS = set("AEIOU")
 CONSONANTS = set("BCDFGHJKLMNPQRSTVWXYZ")
@@ -1555,6 +1556,11 @@ class ClassicGame:
         self.wrong_guesses = 0
         self.max_wrong = 6
         self.round_start_time: float | None = None
+        # Total time allotted for the current round, starting at
+        # CLASSIC_ROUND_TIMEOUT (or whatever was left on !resume) and
+        # growing by CLASSIC_LETTER_BONUS_SECONDS each time a correct
+        # letter guess extends the clock.
+        self.round_duration: float = CLASSIC_ROUND_TIMEOUT
         # True once the player has made at least one guess (right or wrong)
         # in the current round. Reset to False every time a fresh round
         # starts. Used to only allow !pause at the very start of a round.
@@ -1579,6 +1585,7 @@ class ClassicGame:
         self.wrong_letters = set()
         self.wrong_guesses = 0
         self.round_start_time = time.monotonic()
+        self.round_duration = CLASSIC_ROUND_TIMEOUT
         self.has_guessed_this_round = False
 
         embed = discord.Embed(
@@ -1591,13 +1598,16 @@ class ClassicGame:
             value=f"{self.wrong_guesses}/{self.max_wrong}\nLetters: {self.format_wrong_letters()}",
             inline=False,
         )
-        embed.set_footer(text=f"Guess a letter or the full word. {CLASSIC_ROUND_TIMEOUT}s per round.")
+        embed.set_footer(
+            text=f"Guess a letter or the full word. {CLASSIC_ROUND_TIMEOUT}s per round "
+            f"(+{CLASSIC_LETTER_BONUS_SECONDS}s per correct letter)."
+        )
 
         if prior_announcement:
             await self.channel.send(prior_announcement)
         await self.channel.send(embed=embed)
 
-        self._schedule_round_timers(CLASSIC_ROUND_TIMEOUT)
+        self._schedule_round_timers(self.round_duration)
 
     def format_wrong_letters(self) -> str:
         return ", ".join(sorted(self.wrong_letters)) if self.wrong_letters else "None yet"
@@ -1624,6 +1634,16 @@ class ClassicGame:
             # Already at or under the warning threshold (e.g. resuming a
             # round with <20s left) — nothing useful to warn about.
             self._warning_task = None
+
+    def _add_time_bonus(self, bonus: float) -> None:
+        """Adds `bonus` seconds to whatever time is left on the current
+        round's clock and reschedules the timeout/warning tasks to match.
+        """
+        elapsed = time.monotonic() - self.round_start_time if self.round_start_time is not None else 0.0
+        remaining = max(0.0, self.round_duration - elapsed)
+        self.round_duration = remaining + bonus
+        self.round_start_time = time.monotonic()
+        self._schedule_round_timers(self.round_duration)
 
     def _cancel_round_timers(self) -> None:
         if self._timeout_task and self._timeout_task is not asyncio.current_task():
@@ -1686,8 +1706,9 @@ class ClassicGame:
                 announce = f"✅ You completed the word: **{self.current_word}**! +1 point (total: {self.score})"
                 await self._advance(prior_announcement=announce)
             else:
+                self._add_time_bonus(CLASSIC_LETTER_BONUS_SECONDS)
                 await self.channel.send(
-                    f"✅ `{letter}` is in it!\n`{self.render_display()}`\n"
+                    f"✅ `{letter}` is in it! (+{CLASSIC_LETTER_BONUS_SECONDS}s)\n`{self.render_display()}`\n"
                     f"Wrong guesses: {self.wrong_guesses}/{self.max_wrong} – {self.format_wrong_letters()}"
                 )
         else:
@@ -1778,7 +1799,7 @@ class ClassicGame:
                 if self.round_start_time is not None
                 else 0.0
             )
-            seconds_left = max(0.0, CLASSIC_ROUND_TIMEOUT - elapsed)
+            seconds_left = max(0.0, self.round_duration - elapsed)
 
             # Note: deliberately omits "player" (a discord.Member) and
             # "word_lists" so this snapshot is plain-JSON-serializable and
@@ -1819,6 +1840,8 @@ class ClassicGame:
         await self.channel.send(welcome_note)
         await self.channel.send(embed=embed)
 
+        self.round_start_time = time.monotonic()
+        self.round_duration = seconds_left
         self._schedule_round_timers(seconds_left)
 
 
@@ -2147,7 +2170,10 @@ async def classic_start(ctx: commands.Context):
 
     game = ClassicGame(ctx.channel, ctx.author, word_lists)
     active_classic_games[ctx.channel.id] = game
-    await ctx.send(f"🧩 **{ctx.author.display_name}** started a Classic Hangman game! You have 6 wrong guesses per word and {CLASSIC_ROUND_TIMEOUT}s per round. Good luck!")
+    await ctx.send(
+        f"🧩 **{ctx.author.display_name}** started a Classic Hangman game! You have 6 wrong guesses per word "
+        f"and {CLASSIC_ROUND_TIMEOUT}s per round (+{CLASSIC_LETTER_BONUS_SECONDS}s for every correct letter). Good luck!"
+    )
     await game.start_round()
 
 
@@ -2225,7 +2251,6 @@ async def classic_resume(ctx: commands.Context):
     game.wrong_letters = set(snapshot["wrong_letters"])
     game.wrong_guesses = snapshot["wrong_guesses"]
     seconds_left = snapshot["seconds_left"]
-    game.round_start_time = time.monotonic() - (CLASSIC_ROUND_TIMEOUT - seconds_left)
 
     active_classic_games[ctx.channel.id] = game
     await game.resume_round(
