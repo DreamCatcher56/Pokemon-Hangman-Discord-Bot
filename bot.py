@@ -14,7 +14,7 @@ import asyncio
 import time
 import sqlite3
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta, date
 
 
 import discord
@@ -55,6 +55,9 @@ ROUND_TIMEOUT_SECONDS = 100          # for regular multiplayer hangman
 CLASSIC_ROUND_TIMEOUT = 60           
 CLASSIC_LETTER_BONUS_SECONDS = 2  # extra time added to the clock per correct letter guess
 CLASSIC_ROUND_WARNING_SECONDS = 20    # send a "time's running out" heads-up this many seconds before the timeout
+QUOTE_MIN_WORDS = 6            # !quote only picks messages with at least this many words
+QUOTE_MAX_DATE_ATTEMPTS = 20   # how many random days to try before giving up
+QUOTE_UNKNOWN_AUTHOR_LABEL = "php"  # shown when the original author has left/deleted their account
 VOWELS = set("AEIOU")
 CONSONANTS = set("BCDFGHJKLMNPQRSTVWXYZ")
 
@@ -122,6 +125,9 @@ active_blitz_games: dict[int, "BlitzSpeedGame"] = {}
 
 # channel_id -> ClassicGame
 active_classic_games: dict[int, "ClassicGame"] = {}
+
+# channel_id -> dict with the currently-pulled, not-yet-revealed !quote
+active_quote_games: dict[int, dict] = {}
 
 # channel_id -> {user_id: paused-state snapshot dict}
 # Lets multiple players each have their own paused classic game on hold in a
@@ -2357,6 +2363,158 @@ async def reset_db_command(ctx: commands.Context):
             f"✅ Database wiped. Removed **{blitz_deleted}** blitz score(s) and "
             f"**{classic_deleted}** classic score(s)."
         )
+
+
+
+
+# ---------------------------------------------------------------------------
+# !quote / !r — pull a random old message from the channel's history and
+# guess who said it. Rather than indexing/caching the whole channel history
+# (heavy for a long-lived server), this picks a random calendar day between
+# the server's creation and now and only ever fetches that one day's worth
+# of messages, re-rolling the day if it comes up empty.
+# ---------------------------------------------------------------------------
+
+
+def _random_day_window(range_start: datetime, range_end: datetime) -> tuple[datetime, datetime]:
+    """Picks a uniformly random calendar day between range_start and
+    range_end (inclusive), returning that day's [start, end) window in UTC,
+    clamped so it never extends before range_start or after range_end.
+    """
+    start_ordinal = range_start.date().toordinal()
+    end_ordinal = range_end.date().toordinal()
+    random_date = date.fromordinal(random.randint(start_ordinal, end_ordinal))
+
+    day_start = datetime.combine(random_date, datetime.min.time(), tzinfo=timezone.utc)
+    day_end = day_start + timedelta(days=1)
+
+    day_start = max(day_start, range_start)
+    day_end = min(day_end, range_end)
+    return day_start, day_end
+
+
+async def _pick_random_quote(channel: discord.abc.Messageable, guild: discord.Guild) -> discord.Message | None:
+    """Tries up to QUOTE_MAX_DATE_ATTEMPTS random days, each time fetching
+    only that single day's messages (bounded, lightweight) and filtering to
+    real, human, QUOTE_MIN_WORDS+-word messages. Returns None if nothing
+    turned up after all attempts.
+    """
+    range_start = guild.created_at
+    range_end = datetime.now(timezone.utc)
+    if range_start >= range_end:
+        return None
+
+    prefix = str(bot.command_prefix)
+
+    for _ in range(QUOTE_MAX_DATE_ATTEMPTS):
+        day_start, day_end = _random_day_window(range_start, range_end)
+        if day_start >= day_end:
+            continue
+
+        candidates = []
+        async for msg in channel.history(after=day_start, before=day_end, limit=None):
+            if msg.author.bot:
+                continue
+            if msg.type not in (discord.MessageType.default, discord.MessageType.reply):
+                continue  # skip pins/joins/etc., not real chat messages
+            content = msg.content.strip()
+            if not content or content.startswith(prefix):
+                continue
+            if len(content.split()) < QUOTE_MIN_WORDS:
+                continue
+            candidates.append(msg)
+
+        if candidates:
+            return random.choice(candidates)
+
+    return None
+
+
+@bot.command(name="quote")
+async def quote_start(ctx: commands.Context):
+    if ctx.guild is None:
+        await ctx.send("This only works in a server channel.")
+        return
+
+    pending = active_quote_games.get(ctx.channel.id)
+    if pending and not pending["answered"]:
+        await ctx.send("There's already an unrevealed quote in this channel — use `!r` to reveal it first.")
+        return
+
+    try:
+        async with ctx.typing():
+            message = await _pick_random_quote(ctx.channel, ctx.guild)
+    except discord.Forbidden:
+        await ctx.send("⛔ I don't have permission to read this channel's message history.")
+        return
+
+    if message is None:
+        await ctx.send(f"🤷 Couldn't dig up a quote after {QUOTE_MAX_DATE_ATTEMPTS} tries — give it another go.")
+        return
+
+    active_quote_games[ctx.channel.id] = {
+        "content": message.content,
+        "author_id": message.author.id,
+        "date": message.created_at,
+        "answered": False,
+    }
+
+    embed = discord.Embed(
+        title="🗣️ Guess the Quote",
+        description=f"> {message.content}",
+        color=discord.Color.purple(),
+    )
+    embed.set_footer(text=f"From {message.created_at.strftime('%B %d, %Y')} — type !r to reveal who said it.")
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="r")
+async def quote_reveal(ctx: commands.Context):
+    quote = active_quote_games.get(ctx.channel.id)
+    if quote is None:
+        await ctx.send("No quote is up right now — start one with `!quote`.")
+        return
+
+    name_display = QUOTE_UNKNOWN_AUTHOR_LABEL
+    if ctx.guild is not None:
+        member = ctx.guild.get_member(quote["author_id"])
+        if member is not None:
+            name_display = member.display_name
+        else:
+            try:
+                # Not in the member cache — try fetching them as a current
+                # guild member (this is what actually distinguishes "still
+                # in the server" from "left the server").
+                member = await ctx.guild.fetch_member(quote["author_id"])
+                name_display = member.display_name
+            except discord.NotFound:
+                # Not a member of this guild anymore. That alone doesn't
+                # mean the account was deleted — they may have simply left.
+                # Fall back to a global user lookup: if the account still
+                # exists, show their (global) name; only show the
+                # deleted-account placeholder if Discord no longer knows
+                # about the account at all.
+                try:
+                    user = await bot.fetch_user(quote["author_id"])
+                    name_display = user.display_name
+                except discord.NotFound:
+                    name_display = QUOTE_UNKNOWN_AUTHOR_LABEL
+                except discord.HTTPException:
+                    name_display = QUOTE_UNKNOWN_AUTHOR_LABEL
+            except discord.HTTPException:
+                name_display = QUOTE_UNKNOWN_AUTHOR_LABEL
+
+    quote["answered"] = True
+
+    embed = discord.Embed(
+        title="🎙️ Quote Revealed",
+        description=f"> {quote['content']}",
+        color=discord.Color.gold(),
+    )
+    embed.add_field(name="Said by", value=name_display, inline=True)
+    embed.add_field(name="Date", value=quote["date"].strftime("%B %d, %Y"), inline=True)
+    embed.set_footer(text="Use !quote to pull a new one.")
+    await ctx.send(embed=embed)
 
 
 
