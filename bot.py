@@ -59,7 +59,6 @@ CLASSIC_ROUND_WARNING_SECONDS = 20    # send a "time's running out" heads-up thi
 QUOTE_MIN_WORDS = 7            # !quote only picks messages with at least this many words
 QUOTE_MAX_DATE_ATTEMPTS = 20   # how many random days to try before giving up
 QUOTE_UNKNOWN_AUTHOR_LABEL = "php"  # shown when the original author has left/deleted their account
-QUOTE_SPOILER_PAD_LENGTH = 32   # Discord's max display-name length; pads every spoiler to this width
 VOWELS = set("AEIOU")
 CONSONANTS = set("BCDFGHJKLMNPQRSTVWXYZ")
 
@@ -767,6 +766,43 @@ class ResetDBConfirmView(discord.ui.View):
 # ---------------------------------------------------------------------------
 # Join view (button-based lobby)
 # ---------------------------------------------------------------------------
+
+
+QUOTE_REVEAL_TIMEOUT_SECONDS = 300  # Reveal button stays clickable for this long
+
+
+class QuoteRevealView(discord.ui.View):
+    """Shown under a !quote embed. Clicking Reveal edits the embed in place
+    to show who said it, then disables the button so it can't be re-used."""
+
+    def __init__(self, name_display: str, timeout: int = QUOTE_REVEAL_TIMEOUT_SECONDS):
+        super().__init__(timeout=timeout)
+        self.name_display = name_display
+        self.message: discord.Message | None = None
+
+    @discord.ui.button(label="Reveal", style=discord.ButtonStyle.primary, emoji="🔍")
+    async def reveal(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = interaction.message.embeds[0]
+        for idx, field in enumerate(embed.fields):
+            if field.name == "Said by":
+                embed.set_field_at(idx, name="Said by", value=self.name_display, inline=field.inline)
+                break
+
+        button.label = "Revealed"
+        button.style = discord.ButtonStyle.secondary
+        button.disabled = True
+
+        await interaction.response.edit_message(embed=embed, view=self)
+        self.stop()
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
 
 
 class JoinView(discord.ui.View):
@@ -2499,16 +2535,12 @@ async def quote_start(ctx: commands.Context):
         description=f"> {message.content}",
         color=discord.Color.purple(),
     )
-    # Pad every name to the same fixed width before spoilering it. Otherwise
-    # the grey spoiler bar's width scales with the name's character count,
-    # which leaks roughly how long the name is before anyone even clicks.
-    # The padding sits inside the "||...||" markers (not at the very end of
-    # the field value), so Discord won't trim it off.
-    padded_name = name_display.ljust(QUOTE_SPOILER_PAD_LENGTH)
-    embed.add_field(name="Said by", value=f"||{padded_name}||", inline=True)
+    embed.add_field(name="Said by", value="❓ Click Reveal to find out!", inline=True)
     embed.add_field(name="Date", value=message.created_at.strftime("%B %d, %Y"), inline=True)
-    embed.set_footer(text="Tap the spoiler to reveal who said it.")
-    await ctx.send(embed=embed)
+    embed.set_footer(text="Click the button below to reveal who said it.")
+
+    view = QuoteRevealView(name_display)
+    view.message = await ctx.send(embed=embed, view=view)
 
 
 
