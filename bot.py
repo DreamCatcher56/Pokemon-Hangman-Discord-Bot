@@ -56,9 +56,10 @@ ROUND_TIMEOUT_SECONDS = 100          # for regular multiplayer hangman
 CLASSIC_ROUND_TIMEOUT = 60           
 CLASSIC_LETTER_BONUS_SECONDS = 2  # extra time added to the clock per correct letter guess
 CLASSIC_ROUND_WARNING_SECONDS = 20    # send a "time's running out" heads-up this many seconds before the timeout
-QUOTE_MIN_WORDS = 6            # !quote only picks messages with at least this many words
+QUOTE_MIN_WORDS = 7            # !quote only picks messages with at least this many words
 QUOTE_MAX_DATE_ATTEMPTS = 20   # how many random days to try before giving up
 QUOTE_UNKNOWN_AUTHOR_LABEL = "php"  # shown when the original author has left/deleted their account
+QUOTE_SPOILER_PAD_LENGTH = 32   # Discord's max display-name length; pads every spoiler to this width
 VOWELS = set("AEIOU")
 CONSONANTS = set("BCDFGHJKLMNPQRSTVWXYZ")
 
@@ -2498,7 +2499,13 @@ async def quote_start(ctx: commands.Context):
         description=f"> {message.content}",
         color=discord.Color.purple(),
     )
-    embed.add_field(name="Said by", value=f"||{name_display}||", inline=True)
+    # Pad every name to the same fixed width before spoilering it. Otherwise
+    # the grey spoiler bar's width scales with the name's character count,
+    # which leaks roughly how long the name is before anyone even clicks.
+    # The padding sits inside the "||...||" markers (not at the very end of
+    # the field value), so Discord won't trim it off.
+    padded_name = name_display.ljust(QUOTE_SPOILER_PAD_LENGTH)
+    embed.add_field(name="Said by", value=f"||{padded_name}||", inline=True)
     embed.add_field(name="Date", value=message.created_at.strftime("%B %d, %Y"), inline=True)
     embed.set_footer(text="Tap the spoiler to reveal who said it.")
     await ctx.send(embed=embed)
