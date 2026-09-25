@@ -8,6 +8,7 @@ abilities, moves, or items pulled from text files.
 
 
 import os
+import re
 import json
 import random
 import asyncio
@@ -125,9 +126,6 @@ active_blitz_games: dict[int, "BlitzSpeedGame"] = {}
 
 # channel_id -> ClassicGame
 active_classic_games: dict[int, "ClassicGame"] = {}
-
-# channel_id -> dict with the currently-pulled, not-yet-revealed !quote
-active_quote_games: dict[int, dict] = {}
 
 # channel_id -> {user_id: paused-state snapshot dict}
 # Lets multiple players each have their own paused classic game on hold in a
@@ -2368,11 +2366,11 @@ async def reset_db_command(ctx: commands.Context):
 
 
 # ---------------------------------------------------------------------------
-# !quote / !r — pull a random old message from the channel's history and
-# guess who said it. Rather than indexing/caching the whole channel history
-# (heavy for a long-lived server), this picks a random calendar day between
-# the server's creation and now and only ever fetches that one day's worth
-# of messages, re-rolling the day if it comes up empty.
+# !quote — pull a random old message from the channel's history and reveal
+# who said it behind a spoiler tag. Rather than indexing/caching the whole
+# channel history (heavy for a long-lived server), this picks a random
+# calendar day between the server's creation and now and only ever fetches
+# that one day's worth of messages, re-rolling the day if it comes up empty.
 # ---------------------------------------------------------------------------
 
 
@@ -2430,15 +2428,56 @@ async def _pick_random_quote(channel: discord.abc.Messageable, guild: discord.Gu
     return None
 
 
+_DELETED_ACCOUNT_NAME_RE = re.compile(r"^deleted[ _]user[ _]?[0-9a-f]{6,}$", re.IGNORECASE)
+
+
+def _is_deleted_account(user: discord.abc.User) -> bool:
+    """Best-effort detection of a genuinely deleted Discord account, as
+    opposed to one that's simply left the server. Discord doesn't expose a
+    real "deleted" flag over the API — when an account is deleted it's
+    renamed to a placeholder like "Deleted User" / "deleted_userXXXXXXXX"
+    (new username system) and, under the legacy discriminator system,
+    typically carries a "0000" discriminator. We check for both signals.
+    """
+    if _DELETED_ACCOUNT_NAME_RE.match(user.name):
+        return True
+    if getattr(user, "discriminator", None) == "0000":
+        return True
+    return False
+
+
+async def _resolve_quote_author_name(guild: discord.Guild, author_id: int) -> str:
+    """Figures out what name to show for the author of a pulled quote:
+    - still in the server -> their current nickname/display name
+    - left the server, account still exists -> their global name
+    - account deleted entirely -> QUOTE_UNKNOWN_AUTHOR_LABEL ("php")
+    """
+    member = guild.get_member(author_id)
+    if member is not None:
+        return member.display_name
+
+    try:
+        member = await guild.fetch_member(author_id)
+        return member.display_name
+    except discord.NotFound:
+        pass  # not currently a member — check if the account still exists at all
+    except discord.HTTPException:
+        return QUOTE_UNKNOWN_AUTHOR_LABEL
+
+    try:
+        user = await bot.fetch_user(author_id)
+    except discord.HTTPException:
+        return QUOTE_UNKNOWN_AUTHOR_LABEL
+
+    if _is_deleted_account(user):
+        return QUOTE_UNKNOWN_AUTHOR_LABEL
+    return user.display_name
+
+
 @bot.command(name="quote")
 async def quote_start(ctx: commands.Context):
     if ctx.guild is None:
         await ctx.send("This only works in a server channel.")
-        return
-
-    pending = active_quote_games.get(ctx.channel.id)
-    if pending and not pending["answered"]:
-        await ctx.send("There's already an unrevealed quote in this channel — use `!r` to reveal it first.")
         return
 
     try:
@@ -2452,68 +2491,16 @@ async def quote_start(ctx: commands.Context):
         await ctx.send(f"🤷 Couldn't dig up a quote after {QUOTE_MAX_DATE_ATTEMPTS} tries — give it another go.")
         return
 
-    active_quote_games[ctx.channel.id] = {
-        "content": message.content,
-        "author_id": message.author.id,
-        "date": message.created_at,
-        "answered": False,
-    }
+    name_display = await _resolve_quote_author_name(ctx.guild, message.author.id)
 
     embed = discord.Embed(
         title="🗣️ Guess the Quote",
         description=f"> {message.content}",
         color=discord.Color.purple(),
     )
-    embed.set_footer(text=f"From {message.created_at.strftime('%B %d, %Y')} — type !r to reveal who said it.")
-    await ctx.send(embed=embed)
-
-
-@bot.command(name="r")
-async def quote_reveal(ctx: commands.Context):
-    quote = active_quote_games.get(ctx.channel.id)
-    if quote is None:
-        await ctx.send("No quote is up right now — start one with `!quote`.")
-        return
-
-    name_display = QUOTE_UNKNOWN_AUTHOR_LABEL
-    if ctx.guild is not None:
-        member = ctx.guild.get_member(quote["author_id"])
-        if member is not None:
-            name_display = member.display_name
-        else:
-            try:
-                # Not in the member cache — try fetching them as a current
-                # guild member (this is what actually distinguishes "still
-                # in the server" from "left the server").
-                member = await ctx.guild.fetch_member(quote["author_id"])
-                name_display = member.display_name
-            except discord.NotFound:
-                # Not a member of this guild anymore. That alone doesn't
-                # mean the account was deleted — they may have simply left.
-                # Fall back to a global user lookup: if the account still
-                # exists, show their (global) name; only show the
-                # deleted-account placeholder if Discord no longer knows
-                # about the account at all.
-                try:
-                    user = await bot.fetch_user(quote["author_id"])
-                    name_display = user.display_name
-                except discord.NotFound:
-                    name_display = QUOTE_UNKNOWN_AUTHOR_LABEL
-                except discord.HTTPException:
-                    name_display = QUOTE_UNKNOWN_AUTHOR_LABEL
-            except discord.HTTPException:
-                name_display = QUOTE_UNKNOWN_AUTHOR_LABEL
-
-    quote["answered"] = True
-
-    embed = discord.Embed(
-        title="🎙️ Quote Revealed",
-        description=f"> {quote['content']}",
-        color=discord.Color.gold(),
-    )
-    embed.add_field(name="Said by", value=name_display, inline=True)
-    embed.add_field(name="Date", value=quote["date"].strftime("%B %d, %Y"), inline=True)
-    embed.set_footer(text="Use !quote to pull a new one.")
+    embed.add_field(name="Said by", value=f"||{name_display}||", inline=True)
+    embed.add_field(name="Date", value=message.created_at.strftime("%B %d, %Y"), inline=True)
+    embed.set_footer(text="Tap the spoiler to reveal who said it.")
     await ctx.send(embed=embed)
 
 
