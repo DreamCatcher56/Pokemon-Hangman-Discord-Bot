@@ -56,7 +56,7 @@ ROUND_TIMEOUT_SECONDS = 100          # for regular multiplayer hangman
 CLASSIC_ROUND_TIMEOUT = 60           
 CLASSIC_LETTER_BONUS_SECONDS = 2  # extra time added to the clock per correct letter guess
 CLASSIC_ROUND_WARNING_SECONDS = 20    # send a "time's running out" heads-up this many seconds before the timeout
-QUOTE_MIN_WORDS = 7            # !quote only picks messages with at least this many words
+QUOTE_MIN_WORDS = 5            # !quote only picks messages with at least this many words
 QUOTE_MAX_DATE_ATTEMPTS = 20   # how many random days to try before giving up
 QUOTE_UNKNOWN_AUTHOR_LABEL = "php"  # shown when the original author has left/deleted their account
 VOWELS = set("AEIOU")
@@ -775,9 +775,10 @@ class QuoteRevealView(discord.ui.View):
     """Shown under a !quote embed. Clicking Reveal edits the embed in place
     to show who said it, then disables the button so it can't be re-used."""
 
-    def __init__(self, name_display: str, timeout: int = QUOTE_REVEAL_TIMEOUT_SECONDS):
+    def __init__(self, name_display: str, jump_url: str, timeout: int = QUOTE_REVEAL_TIMEOUT_SECONDS):
         super().__init__(timeout=timeout)
         self.name_display = name_display
+        self.jump_url = jump_url
         self.message: discord.Message | None = None
 
     @discord.ui.button(label="Reveal", style=discord.ButtonStyle.primary, emoji="🔍")
@@ -787,6 +788,11 @@ class QuoteRevealView(discord.ui.View):
             if field.name == "Said by":
                 embed.set_field_at(idx, name="Said by", value=self.name_display, inline=field.inline)
                 break
+
+        # The jump link is only ever added here, on reveal — showing it any
+        # earlier would let people click through to the original message
+        # and see the author before guessing, spoiling the game.
+        embed.add_field(name="Original Message", value=f"[Jump to it]({self.jump_url})", inline=True)
 
         button.label = "Revealed"
         button.style = discord.ButtonStyle.secondary
@@ -2465,6 +2471,17 @@ async def _pick_random_quote(channel: discord.abc.Messageable, guild: discord.Gu
     return None
 
 
+def _decapitalize_first_letter(text: str) -> str:
+    """Lowercases the message's first character if it's an uppercase
+    letter, purely so the quote doesn't read like a formal sentence out of
+    context. Leaves everything else (including the rest of the text)
+    untouched.
+    """
+    if text and text[0].isupper():
+        return text[0].lower() + text[1:]
+    return text
+
+
 _DELETED_ACCOUNT_NAME_RE = re.compile(r"^deleted[ _]user[ _]?[0-9a-f]{6,}$", re.IGNORECASE)
 
 
@@ -2529,17 +2546,18 @@ async def quote_start(ctx: commands.Context):
         return
 
     name_display = await _resolve_quote_author_name(ctx.guild, message.author.id)
+    display_content = _decapitalize_first_letter(message.content)
 
     embed = discord.Embed(
         title="🗣️ Guess the Quote",
-        description=f"> {message.content}",
+        description=f"> {display_content}",
         color=discord.Color.purple(),
     )
     embed.add_field(name="Said by", value="❓ Click Reveal to find out!", inline=True)
     embed.add_field(name="Date", value=message.created_at.strftime("%B %d, %Y"), inline=True)
     embed.set_footer(text="Click the button below to reveal who said it.")
 
-    view = QuoteRevealView(name_display)
+    view = QuoteRevealView(name_display, message.jump_url)
     view.message = await ctx.send(embed=embed, view=view)
 
 
