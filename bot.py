@@ -2528,7 +2528,7 @@ async def _resolve_quote_author_name(guild: discord.Guild, author_id: int) -> st
     return user.display_name
 
 
-@bot.command(name="quote")
+@bot.command(name="quote", aliases=["q"])
 async def quote_start(ctx: commands.Context):
     if ctx.guild is None:
         await ctx.send("This only works in a server channel.")
