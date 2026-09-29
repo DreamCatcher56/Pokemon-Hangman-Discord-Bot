@@ -856,6 +856,10 @@ class QuoteStreakAnswerView(discord.ui.View):
         await bump_quote_streak(self.initiator_id, correct=False)
         await self._finish(interaction, "Streak reset to **0** — better luck next time!")
 
+    @discord.ui.button(label="Disregard - Wordle", style=discord.ButtonStyle.secondary, emoji="🤷")
+    async def disregard(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._finish(interaction, "Disregarded — your streak is unchanged.")
+
     async def on_timeout(self):
         for item in self.children:
             item.disabled = True
