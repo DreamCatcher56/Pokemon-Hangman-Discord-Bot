@@ -424,6 +424,18 @@ def _init_db_sync():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_classic_user ON classic_scores(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_classic_score ON classic_scores(score DESC)")
 
+        # !quote guessing streaks - one row per user, their current running
+        # streak of correct guesses (reset to 0 the moment they miss one).
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS quote_streaks (
+                user_id INTEGER PRIMARY KEY,
+                streak INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+
         conn.commit()
     finally:
         conn.close()
@@ -459,6 +471,46 @@ def _reset_db_sync() -> tuple[int, int]:
 
 async def reset_db() -> tuple[int, int]:
     return await asyncio.to_thread(_reset_db_sync)
+
+
+
+
+def _get_quote_streak_sync(user_id: int) -> int:
+    conn = _get_connection()
+    try:
+        row = conn.execute("SELECT streak FROM quote_streaks WHERE user_id = ?", (user_id,)).fetchone()
+        return row[0] if row else 0
+    finally:
+        conn.close()
+
+
+async def get_quote_streak(user_id: int) -> int:
+    return await asyncio.to_thread(_get_quote_streak_sync, user_id)
+
+
+def _bump_quote_streak_sync(user_id: int, correct: bool) -> int:
+    conn = _get_connection()
+    try:
+        row = conn.execute("SELECT streak FROM quote_streaks WHERE user_id = ?", (user_id,)).fetchone()
+        current = row[0] if row else 0
+        new_streak = current + 1 if correct else 0
+        conn.execute(
+            """
+            INSERT INTO quote_streaks (user_id, streak, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET streak = excluded.streak, updated_at = excluded.updated_at
+            """,
+            (user_id, new_streak, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+        return new_streak
+    finally:
+        conn.close()
+
+
+async def bump_quote_streak(user_id: int, correct: bool) -> int:
+    """Increments the user's streak on a correct guess, or resets it to 0
+    on a wrong one. Returns the resulting streak value."""
+    return await asyncio.to_thread(_bump_quote_streak_sync, user_id, correct)
 
 
 
@@ -771,15 +823,69 @@ class ResetDBConfirmView(discord.ui.View):
 QUOTE_REVEAL_TIMEOUT_SECONDS = 300  # Reveal button stays clickable for this long
 
 
+QUOTE_STREAK_ANSWER_TIMEOUT_SECONDS = 60
+
+
+class QuoteStreakAnswerView(discord.ui.View):
+    """Ephemeral follow-up shown only to whoever started the !quote round,
+    right after they hit Reveal. Nobody else can see or interact with this
+    (Discord ephemeral messages are only visible to the recipient), but the
+    interaction_check is kept as a defensive second layer."""
+
+    def __init__(self, initiator_id: int, timeout: int = QUOTE_STREAK_ANSWER_TIMEOUT_SECONDS):
+        super().__init__(timeout=timeout)
+        self.initiator_id = initiator_id
+        self.message: discord.WebhookMessage | discord.Message | None = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return interaction.user.id == self.initiator_id
+
+    async def _finish(self, interaction: discord.Interaction, content: str):
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(content=content, view=self)
+        self.stop()
+
+    @discord.ui.button(label="Correct", style=discord.ButtonStyle.success, emoji="✅")
+    async def correct(self, interaction: discord.Interaction, button: discord.ui.Button):
+        streak = await bump_quote_streak(self.initiator_id, correct=True)
+        await self._finish(interaction, f"🔥 Nice! Your streak is now **{streak}**.")
+
+    @discord.ui.button(label="Incorrect", style=discord.ButtonStyle.danger, emoji="❌")
+    async def incorrect(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await bump_quote_streak(self.initiator_id, correct=False)
+        await self._finish(interaction, "Streak reset to **0** — better luck next time!")
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
+
+
 class QuoteRevealView(discord.ui.View):
     """Shown under a !quote embed. Clicking Reveal edits the embed in place
-    to show who said it, then disables the button so it can't be re-used."""
+    to show who said it, then disables the button so it can't be re-used.
+    Restricted to whoever started the round, since the follow-up streak
+    prompt only makes sense directed at that specific person."""
 
-    def __init__(self, name_display: str, jump_url: str, timeout: int = QUOTE_REVEAL_TIMEOUT_SECONDS):
+    def __init__(self, name_display: str, jump_url: str, initiator_id: int, timeout: int = QUOTE_REVEAL_TIMEOUT_SECONDS):
         super().__init__(timeout=timeout)
         self.name_display = name_display
         self.jump_url = jump_url
+        self.initiator_id = initiator_id
         self.message: discord.Message | None = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.initiator_id:
+            await interaction.response.send_message(
+                "Only the person who ran `!quote`/`!q` can reveal this one.", ephemeral=True
+            )
+            return False
+        return True
 
     @discord.ui.button(label="Reveal", style=discord.ButtonStyle.primary, emoji="🔍")
     async def reveal(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -800,6 +906,13 @@ class QuoteRevealView(discord.ui.View):
 
         await interaction.response.edit_message(embed=embed, view=self)
         self.stop()
+
+        # Ask the initiator (and only them) whether they guessed correctly,
+        # to track their personal streak.
+        streak_view = QuoteStreakAnswerView(self.initiator_id)
+        streak_view.message = await interaction.followup.send(
+            "Did you guess correctly?", view=streak_view, ephemeral=True
+        )
 
     async def on_timeout(self):
         for item in self.children:
@@ -2547,6 +2660,7 @@ async def quote_start(ctx: commands.Context):
 
     name_display = await _resolve_quote_author_name(ctx.guild, message.author.id)
     display_content = _decapitalize_first_letter(message.content)
+    current_streak = await get_quote_streak(ctx.author.id)
 
     embed = discord.Embed(
         title="🗣️ Guess the Quote",
@@ -2555,9 +2669,9 @@ async def quote_start(ctx: commands.Context):
     )
     embed.add_field(name="Said by", value="❓ Click Reveal to find out!", inline=True)
     embed.add_field(name="Date", value=message.created_at.strftime("%B %d, %Y"), inline=True)
-    embed.set_footer(text="Click the button below to reveal who said it.")
+    embed.set_footer(text=f"{ctx.author.display_name}'s streak: {current_streak} 🔥  •  Click Reveal to find out who said it.")
 
-    view = QuoteRevealView(name_display, message.jump_url)
+    view = QuoteRevealView(name_display, message.jump_url, ctx.author.id)
     view.message = await ctx.send(embed=embed, view=view)
 
 
