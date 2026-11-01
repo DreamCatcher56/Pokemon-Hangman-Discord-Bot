@@ -2618,18 +2618,20 @@ def _is_deleted_account(user: discord.abc.User) -> bool:
 
 
 async def _resolve_quote_author_name(guild: discord.Guild, author_id: int) -> str:
-    """Figures out what name to show for the author of a pulled quote:
-    - still in the server -> their current nickname/display name
-    - left the server, account still exists -> their global name
+    """Figures out what name to show for the author of a pulled quote. This
+    is always the account's actual Discord username (not a server nickname
+    or global display name, which people change constantly):
+    - still in the server -> their Discord username
+    - left the server, account still exists -> their Discord username
     - account deleted entirely -> QUOTE_UNKNOWN_AUTHOR_LABEL ("php")
     """
     member = guild.get_member(author_id)
     if member is not None:
-        return member.display_name
+        return member.name
 
     try:
         member = await guild.fetch_member(author_id)
-        return member.display_name
+        return member.name
     except discord.NotFound:
         pass  # not currently a member — check if the account still exists at all
     except discord.HTTPException:
@@ -2642,7 +2644,7 @@ async def _resolve_quote_author_name(guild: discord.Guild, author_id: int) -> st
 
     if _is_deleted_account(user):
         return QUOTE_UNKNOWN_AUTHOR_LABEL
-    return user.display_name
+    return user.name
 
 
 @bot.command(name="quote", aliases=["q"])
@@ -2673,7 +2675,7 @@ async def quote_start(ctx: commands.Context):
     )
     embed.add_field(name="Said by", value="❓ Click Reveal to find out!", inline=True)
     embed.add_field(name="Date", value=message.created_at.strftime("%B %d, %Y"), inline=True)
-    embed.set_footer(text=f"{ctx.author.display_name}'s streak: {current_streak} 🔥  •  Click Reveal to find out who said it.")
+    embed.set_footer(text=f"{ctx.author.name}'s streak: {current_streak} 🔥  •  Click Reveal to find out who said it.")
 
     view = QuoteRevealView(name_display, message.jump_url, ctx.author.id)
     view.message = await ctx.send(embed=embed, view=view)
