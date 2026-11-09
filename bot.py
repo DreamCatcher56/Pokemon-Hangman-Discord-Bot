@@ -127,6 +127,11 @@ active_blitz_games: dict[int, "BlitzSpeedGame"] = {}
 # channel_id -> ClassicGame
 active_classic_games: dict[int, "ClassicGame"] = {}
 
+# user_id -> QuoteRound (their pulled-but-not-yet-revealed !quote)
+active_quote_rounds: dict[int, "QuoteRound"] = {}
+# user_ids currently waiting on a !quote history lookup (stops double-fire on spam)
+quote_lookups_in_progress: set[int] = set()
+
 # channel_id -> {user_id: paused-state snapshot dict}
 # Lets multiple players each have their own paused classic game on hold in a
 # given channel (and a single player can hold paused games in several
@@ -436,6 +441,22 @@ def _init_db_sync():
             """
         )
 
+        # !quote accuracy tracking - one row per (guesser, quote author)
+        # pair, counting how many of that author's quotes the guesser got
+        # right out of how many they attempted. Overall stats are just the
+        # sum of a guesser's rows.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS quote_author_stats (
+                user_id INTEGER NOT NULL,
+                author_id INTEGER NOT NULL,
+                correct INTEGER NOT NULL DEFAULT 0,
+                total INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (user_id, author_id)
+            )
+            """
+        )
+
         conn.commit()
     finally:
         conn.close()
@@ -488,7 +509,7 @@ async def get_quote_streak(user_id: int) -> int:
     return await asyncio.to_thread(_get_quote_streak_sync, user_id)
 
 
-def _bump_quote_streak_sync(user_id: int, correct: bool) -> int:
+def _record_quote_result_sync(user_id: int, author_id: int, correct: bool) -> int:
     conn = _get_connection()
     try:
         row = conn.execute("SELECT streak FROM quote_streaks WHERE user_id = ?", (user_id,)).fetchone()
@@ -501,16 +522,44 @@ def _bump_quote_streak_sync(user_id: int, correct: bool) -> int:
             """,
             (user_id, new_streak, datetime.now(timezone.utc).isoformat()),
         )
+        conn.execute(
+            """
+            INSERT INTO quote_author_stats (user_id, author_id, correct, total) VALUES (?, ?, ?, 1)
+            ON CONFLICT(user_id, author_id) DO UPDATE SET
+                correct = correct + excluded.correct,
+                total = total + 1
+            """,
+            (user_id, author_id, 1 if correct else 0),
+        )
         conn.commit()
         return new_streak
     finally:
         conn.close()
 
 
-async def bump_quote_streak(user_id: int, correct: bool) -> int:
-    """Increments the user's streak on a correct guess, or resets it to 0
-    on a wrong one. Returns the resulting streak value."""
-    return await asyncio.to_thread(_bump_quote_streak_sync, user_id, correct)
+async def record_quote_result(user_id: int, author_id: int, correct: bool) -> int:
+    """Records one answered !quote guess: bumps the guesser's streak (or
+    resets it to 0 on a miss) and adds to their right/wrong tally for that
+    quote's author. Returns the resulting streak value."""
+    return await asyncio.to_thread(_record_quote_result_sync, user_id, author_id, correct)
+
+
+def _get_quote_profile_sync(user_id: int) -> list[tuple[int, int, int]]:
+    conn = _get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT author_id, correct, total FROM quote_author_stats WHERE user_id = ?",
+            (user_id,),
+        ).fetchall()
+        return [(r[0], r[1], r[2]) for r in rows]
+    finally:
+        conn.close()
+
+
+async def get_quote_profile(user_id: int) -> list[tuple[int, int, int]]:
+    """Returns [(author_id, correct, total), ...] for everyone whose quotes
+    this user has guessed on."""
+    return await asyncio.to_thread(_get_quote_profile_sync, user_id)
 
 
 
@@ -820,10 +869,38 @@ class ResetDBConfirmView(discord.ui.View):
 # ---------------------------------------------------------------------------
 
 
-QUOTE_REVEAL_TIMEOUT_SECONDS = 300  # Reveal button stays clickable for this long
+QUOTE_REVEAL_TIMEOUT_SECONDS = 3600  # Reveal button stays clickable for this long (1 hour)
 
 
 QUOTE_STREAK_ANSWER_TIMEOUT_SECONDS = 60
+
+
+class QuoteRound:
+    """One pulled !quote that its initiator hasn't revealed yet. Kept in
+    active_quote_rounds (keyed by initiator) so a second !q can re-show it
+    instead of pulling a fresh one."""
+
+    def __init__(self, initiator_id: int, author_id: int, name_display: str,
+                 content: str, date_text: str, jump_url: str):
+        self.initiator_id = initiator_id
+        self.author_id = author_id          # who actually said it (for per-person stats)
+        self.name_display = name_display    # what to show on reveal
+        self.content = content
+        self.date_text = date_text
+        self.jump_url = jump_url
+        self.revealed = False
+        self.view: "QuoteRevealView | None" = None  # the currently-live Reveal button
+
+    def build_embed(self, streak: int, initiator_username: str) -> discord.Embed:
+        embed = discord.Embed(
+            title="🗣️ Guess the Quote",
+            description=f"> {self.content}",
+            color=discord.Color.purple(),
+        )
+        embed.add_field(name="Said by", value="❓ Click Reveal to find out!", inline=True)
+        embed.add_field(name="Date", value=self.date_text, inline=True)
+        embed.set_footer(text=f"{initiator_username}'s streak: {streak} 🔥  •  Click Reveal to find out who said it.")
+        return embed
 
 
 class QuoteStreakAnswerView(discord.ui.View):
@@ -832,9 +909,10 @@ class QuoteStreakAnswerView(discord.ui.View):
     (Discord ephemeral messages are only visible to the recipient), but the
     interaction_check is kept as a defensive second layer."""
 
-    def __init__(self, initiator_id: int, timeout: int = QUOTE_STREAK_ANSWER_TIMEOUT_SECONDS):
+    def __init__(self, initiator_id: int, author_id: int, timeout: int = QUOTE_STREAK_ANSWER_TIMEOUT_SECONDS):
         super().__init__(timeout=timeout)
         self.initiator_id = initiator_id
+        self.author_id = author_id
         self.message: discord.WebhookMessage | discord.Message | None = None
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -848,12 +926,12 @@ class QuoteStreakAnswerView(discord.ui.View):
 
     @discord.ui.button(label="Correct", style=discord.ButtonStyle.success, emoji="✅")
     async def correct(self, interaction: discord.Interaction, button: discord.ui.Button):
-        streak = await bump_quote_streak(self.initiator_id, correct=True)
+        streak = await record_quote_result(self.initiator_id, self.author_id, correct=True)
         await self._finish(interaction, f"🔥 Nice! Your streak is now **{streak}**.")
 
     @discord.ui.button(label="Incorrect", style=discord.ButtonStyle.danger, emoji="❌")
     async def incorrect(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await bump_quote_streak(self.initiator_id, correct=False)
+        await record_quote_result(self.initiator_id, self.author_id, correct=False)
         await self._finish(interaction, "Streak reset to **0** — better luck next time!")
 
     @discord.ui.button(label="Disregard - Wordle", style=discord.ButtonStyle.secondary, emoji="🤷")
@@ -876,15 +954,13 @@ class QuoteRevealView(discord.ui.View):
     Restricted to whoever started the round, since the follow-up streak
     prompt only makes sense directed at that specific person."""
 
-    def __init__(self, name_display: str, jump_url: str, initiator_id: int, timeout: int = QUOTE_REVEAL_TIMEOUT_SECONDS):
+    def __init__(self, quote_round: QuoteRound, timeout: int = QUOTE_REVEAL_TIMEOUT_SECONDS):
         super().__init__(timeout=timeout)
-        self.name_display = name_display
-        self.jump_url = jump_url
-        self.initiator_id = initiator_id
+        self.round = quote_round
         self.message: discord.Message | None = None
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id != self.initiator_id:
+        if interaction.user.id != self.round.initiator_id:
             await interaction.response.send_message(
                 "Only the person who ran `!quote`/`!q` can reveal this one.", ephemeral=True
             )
@@ -893,16 +969,24 @@ class QuoteRevealView(discord.ui.View):
 
     @discord.ui.button(label="Reveal", style=discord.ButtonStyle.primary, emoji="🔍")
     async def reveal(self, interaction: discord.Interaction, button: discord.ui.Button):
+        quote_round = self.round
+        if quote_round.revealed:
+            await interaction.response.send_message("This one's already been revealed.", ephemeral=True)
+            return
+        quote_round.revealed = True
+        if active_quote_rounds.get(quote_round.initiator_id) is quote_round:
+            del active_quote_rounds[quote_round.initiator_id]
+
         embed = interaction.message.embeds[0]
         for idx, field in enumerate(embed.fields):
             if field.name == "Said by":
-                embed.set_field_at(idx, name="Said by", value=self.name_display, inline=field.inline)
+                embed.set_field_at(idx, name="Said by", value=quote_round.name_display, inline=field.inline)
                 break
 
         # The jump link is only ever added here, on reveal — showing it any
         # earlier would let people click through to the original message
         # and see the author before guessing, spoiling the game.
-        embed.add_field(name="Original Message", value=f"[Jump to it]({self.jump_url})", inline=True)
+        embed.add_field(name="Original Message", value=f"[Jump to it]({quote_round.jump_url})", inline=True)
 
         button.label = "Revealed"
         button.style = discord.ButtonStyle.secondary
@@ -912,8 +996,8 @@ class QuoteRevealView(discord.ui.View):
         self.stop()
 
         # Ask the initiator (and only them) whether they guessed correctly,
-        # to track their personal streak.
-        streak_view = QuoteStreakAnswerView(self.initiator_id)
+        # to track their personal streak and per-person accuracy.
+        streak_view = QuoteStreakAnswerView(quote_round.initiator_id, quote_round.author_id)
         streak_view.message = await interaction.followup.send(
             "Did you guess correctly?", view=streak_view, ephemeral=True
         )
@@ -926,6 +1010,10 @@ class QuoteRevealView(discord.ui.View):
                 await self.message.edit(view=self)
             except discord.HTTPException:
                 pass
+        # A timed-out round can no longer be revealed, so it shouldn't keep
+        # blocking its owner from pulling a new quote.
+        if active_quote_rounds.get(self.round.initiator_id) is self.round:
+            del active_quote_rounds[self.round.initiator_id]
 
 
 class JoinView(discord.ui.View):
@@ -2647,38 +2735,133 @@ async def _resolve_quote_author_name(guild: discord.Guild, author_id: int) -> st
     return user.name
 
 
+async def _send_quote_round(ctx: commands.Context, quote_round: QuoteRound, intro: str | None = None) -> None:
+    """Posts a quote round's embed + Reveal button. If the round already has
+    a live button somewhere (i.e. this is a re-show), that old one is retired
+    first so there's only ever one clickable Reveal per round."""
+    old_view = quote_round.view
+    if old_view is not None:
+        old_view.stop()
+        for item in old_view.children:
+            item.disabled = True
+            item.label = "Re-posted below"
+        if old_view.message is not None:
+            try:
+                await old_view.message.edit(view=old_view)
+            except discord.HTTPException:
+                pass
+
+    streak = await get_quote_streak(quote_round.initiator_id)
+    view = QuoteRevealView(quote_round)
+    quote_round.view = view
+    view.message = await ctx.send(
+        intro, embed=quote_round.build_embed(streak, ctx.author.name), view=view
+    )
+
+
 @bot.command(name="quote", aliases=["q"])
 async def quote_start(ctx: commands.Context):
     if ctx.guild is None:
         await ctx.send("This only works in a server channel.")
         return
 
+    # If they still have a quote they haven't revealed, tell them and
+    # re-show that one instead of pulling a new quote.
+    pending = active_quote_rounds.get(ctx.author.id)
+    if pending is not None and not pending.revealed:
+        await _send_quote_round(
+            ctx, pending,
+            intro="⚠️ You haven't revealed your last quote yet! Here it is again:",
+        )
+        return
+
+    if ctx.author.id in quote_lookups_in_progress:
+        return  # already digging one up for them; ignore the duplicate command
+    quote_lookups_in_progress.add(ctx.author.id)
     try:
-        async with ctx.typing():
-            message = await _pick_random_quote(ctx.channel, ctx.guild)
-    except discord.Forbidden:
-        await ctx.send("⛔ I don't have permission to read this channel's message history.")
+        try:
+            async with ctx.typing():
+                message = await _pick_random_quote(ctx.channel, ctx.guild)
+        except discord.Forbidden:
+            await ctx.send("⛔ I don't have permission to read this channel's message history.")
+            return
+
+        if message is None:
+            await ctx.send(f"🤷 Couldn't dig up a quote after {QUOTE_MAX_DATE_ATTEMPTS} tries — give it another go.")
+            return
+
+        name_display = await _resolve_quote_author_name(ctx.guild, message.author.id)
+        quote_round = QuoteRound(
+            initiator_id=ctx.author.id,
+            author_id=message.author.id,
+            name_display=name_display,
+            content=_decapitalize_first_letter(message.content),
+            date_text=message.created_at.strftime("%B %d, %Y"),
+            jump_url=message.jump_url,
+        )
+        active_quote_rounds[ctx.author.id] = quote_round
+        await _send_quote_round(ctx, quote_round)
+    finally:
+        quote_lookups_in_progress.discard(ctx.author.id)
+
+
+def _format_ratio(correct: int, total: int) -> str:
+    pct = int(100 * correct / total + 0.5) if total else 0
+    return f"{correct}/{total} - {pct}%"
+
+
+@bot.command(name="profile")
+async def quote_profile(ctx: commands.Context):
+    """Shows the caller's overall !quote accuracy plus a per-person breakdown
+    of how well they recognise each author."""
+    if ctx.guild is None:
+        await ctx.send("This only works in a server channel.")
         return
 
-    if message is None:
-        await ctx.send(f"🤷 Couldn't dig up a quote after {QUOTE_MAX_DATE_ATTEMPTS} tries — give it another go.")
+    rows = await get_quote_profile(ctx.author.id)
+    streak = await get_quote_streak(ctx.author.id)
+
+    embed = discord.Embed(title=f"📊 {ctx.author.name}'s Quote Profile", color=discord.Color.blue())
+
+    if not rows:
+        embed.description = "No guesses recorded yet — use `!q` and mark your answers to start tracking!"
+        await ctx.send(embed=embed)
         return
 
-    name_display = await _resolve_quote_author_name(ctx.guild, message.author.id)
-    display_content = _decapitalize_first_letter(message.content)
-    current_streak = await get_quote_streak(ctx.author.id)
+    async with ctx.typing():
+        names = await asyncio.gather(
+            *(_resolve_quote_author_name(ctx.guild, author_id) for author_id, _, _ in rows)
+        )
 
-    embed = discord.Embed(
-        title="🗣️ Guess the Quote",
-        description=f"> {display_content}",
-        color=discord.Color.purple(),
+    # Merge by displayed name so every deleted account ends up on one "php" line.
+    by_name: dict[str, list[int]] = {}
+    for (_, correct, total), name in zip(rows, names):
+        entry = by_name.setdefault(name, [0, 0])
+        entry[0] += correct
+        entry[1] += total
+
+    overall_correct = sum(c for _, c, _ in rows)
+    overall_total = sum(t for _, _, t in rows)
+
+    lines = [
+        f"**{discord.utils.escape_markdown(name)}**: {_format_ratio(c, t)}"
+        for name, (c, t) in sorted(by_name.items(), key=lambda kv: (-kv[1][1], kv[0].lower()))
+    ]
+
+    header = (
+        f"**Overall: {_format_ratio(overall_correct, overall_total)}**\n"
+        f"🔥 Current streak: {streak}\n\n"
+        f"**By person**\n"
     )
-    embed.add_field(name="Said by", value="❓ Click Reveal to find out!", inline=True)
-    embed.add_field(name="Date", value=message.created_at.strftime("%B %d, %Y"), inline=True)
-    embed.set_footer(text=f"{ctx.author.name}'s streak: {current_streak} 🔥  •  Click Reveal to find out who said it.")
+    body = ""
+    for i, line in enumerate(lines):
+        if len(header) + len(body) + len(line) + 40 > 4000:  # embed description limit is 4096
+            body += f"...and {len(lines) - i} more"
+            break
+        body += line + "\n"
 
-    view = QuoteRevealView(name_display, message.jump_url, ctx.author.id)
-    view.message = await ctx.send(embed=embed, view=view)
+    embed.description = header + body
+    await ctx.send(embed=embed)
 
 
 
