@@ -436,10 +436,16 @@ def _init_db_sync():
             CREATE TABLE IF NOT EXISTS quote_streaks (
                 user_id INTEGER PRIMARY KEY,
                 streak INTEGER NOT NULL DEFAULT 0,
+                best_streak INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL
             )
             """
         )
+        # Older databases were created before best_streak existed.
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(quote_streaks)").fetchall()]
+        if "best_streak" not in cols:
+            conn.execute("ALTER TABLE quote_streaks ADD COLUMN best_streak INTEGER NOT NULL DEFAULT 0")
+        conn.execute("UPDATE quote_streaks SET best_streak = streak WHERE best_streak < streak")
 
         # !quote accuracy tracking - one row per (guesser, quote author)
         # pair, counting how many of that author's quotes the guesser got
@@ -509,18 +515,38 @@ async def get_quote_streak(user_id: int) -> int:
     return await asyncio.to_thread(_get_quote_streak_sync, user_id)
 
 
+def _get_quote_streak_stats_sync(user_id: int) -> tuple[int, int]:
+    conn = _get_connection()
+    try:
+        row = conn.execute(
+            "SELECT streak, best_streak FROM quote_streaks WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        return (row[0], max(row[0], row[1])) if row else (0, 0)
+    finally:
+        conn.close()
+
+
+async def get_quote_streak_stats(user_id: int) -> tuple[int, int]:
+    """Returns (current_streak, longest_streak_ever) for a user."""
+    return await asyncio.to_thread(_get_quote_streak_stats_sync, user_id)
+
+
 def _record_quote_result_sync(user_id: int, author_id: int, correct: bool) -> int:
     conn = _get_connection()
     try:
-        row = conn.execute("SELECT streak FROM quote_streaks WHERE user_id = ?", (user_id,)).fetchone()
-        current = row[0] if row else 0
+        row = conn.execute("SELECT streak, best_streak FROM quote_streaks WHERE user_id = ?", (user_id,)).fetchone()
+        current, best = (row[0], row[1]) if row else (0, 0)
         new_streak = current + 1 if correct else 0
+        new_best = max(best, new_streak)
         conn.execute(
             """
-            INSERT INTO quote_streaks (user_id, streak, updated_at) VALUES (?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET streak = excluded.streak, updated_at = excluded.updated_at
+            INSERT INTO quote_streaks (user_id, streak, best_streak, updated_at) VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                streak = excluded.streak,
+                best_streak = excluded.best_streak,
+                updated_at = excluded.updated_at
             """,
-            (user_id, new_streak, datetime.now(timezone.utc).isoformat()),
+            (user_id, new_streak, new_best, datetime.now(timezone.utc).isoformat()),
         )
         conn.execute(
             """
@@ -2819,7 +2845,7 @@ async def quote_profile(ctx: commands.Context):
         return
 
     rows = await get_quote_profile(ctx.author.id)
-    streak = await get_quote_streak(ctx.author.id)
+    streak, best_streak = await get_quote_streak_stats(ctx.author.id)
 
     embed = discord.Embed(title=f"📊 {ctx.author.name}'s Quote Profile", color=discord.Color.blue())
 
@@ -2850,7 +2876,7 @@ async def quote_profile(ctx: commands.Context):
 
     header = (
         f"**Overall: {_format_ratio(overall_correct, overall_total)}**\n"
-        f"🔥 Current streak: {streak}\n\n"
+        f"🔥 Current streak: {streak}  •  🏆 Longest streak: {best_streak}\n\n"
         f"**By person**\n"
     )
     body = ""
