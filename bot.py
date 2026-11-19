@@ -59,6 +59,16 @@ CLASSIC_ROUND_WARNING_SECONDS = 20    # send a "time's running out" heads-up thi
 QUOTE_MIN_WORDS = 7            # !quote only picks messages with at least this many words
 QUOTE_MAX_DATE_ATTEMPTS = 20   # how many random days to try before giving up
 QUOTE_UNKNOWN_AUTHOR_LABEL = "php"  # shown when the original author has left/deleted their account
+# Extra accounts that count as "php" (alongside deleted accounts) in the stats.
+# Their quotes are recorded under QUOTE_PHP_AUTHOR_ID, so !profile/!global/!p2
+# list them as php, but a quote reveal still shows their real username.
+QUOTE_PHP_ALIAS_IDS = frozenset({
+    1239880146639388695,
+    1446924725854015642,
+    1029104964162826361,
+})
+QUOTE_PHP_AUTHOR_ID = 0  # stand-in author id that every php alias is stored under
+QUOTE_P2_WINDOW = 100     # how many recent guesses !p2 looks back over
 VOWELS = set("AEIOU")
 CONSONANTS = set("BCDFGHJKLMNPQRSTVWXYZ")
 
@@ -463,6 +473,39 @@ def _init_db_sync():
             """
         )
 
+        # Every individual answered guess, so !p2 can look at the most recent N.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS quote_guess_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                author_id INTEGER NOT NULL,
+                correct INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_quote_log_user ON quote_guess_log(user_id, id)")
+
+        # Fold any stats recorded under the php alias accounts into the single
+        # php entry. Safe to run on every startup: once the alias rows are
+        # merged and deleted there is nothing left for it to match.
+        alias_ids = list(QUOTE_PHP_ALIAS_IDS)
+        marks = ",".join("?" * len(alias_ids))
+        conn.execute(
+            f"""
+            INSERT INTO quote_author_stats (user_id, author_id, correct, total)
+            SELECT user_id, ?, SUM(correct), SUM(total) FROM quote_author_stats
+            WHERE author_id IN ({marks}) GROUP BY user_id
+            ON CONFLICT(user_id, author_id) DO UPDATE SET
+                correct = correct + excluded.correct,
+                total = total + excluded.total
+            """,
+            [QUOTE_PHP_AUTHOR_ID, *alias_ids],
+        )
+        conn.execute(f"DELETE FROM quote_author_stats WHERE author_id IN ({marks})", alias_ids)
+        conn.execute(f"UPDATE quote_guess_log SET author_id = ? WHERE author_id IN ({marks})", [QUOTE_PHP_AUTHOR_ID, *alias_ids])
+
         conn.commit()
     finally:
         conn.close()
@@ -531,6 +574,11 @@ async def get_quote_streak_stats(user_id: int) -> tuple[int, int]:
     return await asyncio.to_thread(_get_quote_streak_stats_sync, user_id)
 
 
+def _normalize_quote_author_id(author_id: int) -> int:
+    """Maps the php alias accounts onto the single php stand-in id."""
+    return QUOTE_PHP_AUTHOR_ID if author_id in QUOTE_PHP_ALIAS_IDS else author_id
+
+
 def _record_quote_result_sync(user_id: int, author_id: int, correct: bool) -> int:
     conn = _get_connection()
     try:
@@ -538,6 +586,7 @@ def _record_quote_result_sync(user_id: int, author_id: int, correct: bool) -> in
         current, best = (row[0], row[1]) if row else (0, 0)
         new_streak = current + 1 if correct else 0
         new_best = max(best, new_streak)
+        author_id = _normalize_quote_author_id(author_id)
         conn.execute(
             """
             INSERT INTO quote_streaks (user_id, streak, best_streak, updated_at) VALUES (?, ?, ?, ?)
@@ -556,6 +605,10 @@ def _record_quote_result_sync(user_id: int, author_id: int, correct: bool) -> in
                 total = total + 1
             """,
             (user_id, author_id, 1 if correct else 0),
+        )
+        conn.execute(
+            "INSERT INTO quote_guess_log (user_id, author_id, correct, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, author_id, 1 if correct else 0, datetime.now(timezone.utc).isoformat()),
         )
         conn.commit()
         return new_streak
@@ -586,6 +639,39 @@ async def get_quote_profile(user_id: int) -> list[tuple[int, int, int]]:
     """Returns [(author_id, correct, total), ...] for everyone whose quotes
     this user has guessed on."""
     return await asyncio.to_thread(_get_quote_profile_sync, user_id)
+
+
+def _get_quote_global_stats_sync() -> list[tuple[int, int, int]]:
+    conn = _get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT author_id, SUM(correct), SUM(total) FROM quote_author_stats GROUP BY author_id"
+        ).fetchall()
+        return [(r[0], r[1], r[2]) for r in rows]
+    finally:
+        conn.close()
+
+
+async def get_quote_global_stats() -> list[tuple[int, int, int]]:
+    """Returns [(author_id, correct, total), ...] summed across every guesser."""
+    return await asyncio.to_thread(_get_quote_global_stats_sync)
+
+
+def _get_recent_quote_guesses_sync(user_id: int, limit: int) -> list[tuple[int, bool]]:
+    conn = _get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT author_id, correct FROM quote_guess_log WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+        return [(r[0], bool(r[1])) for r in rows]
+    finally:
+        conn.close()
+
+
+async def get_recent_quote_guesses(user_id: int, limit: int) -> list[tuple[int, bool]]:
+    """Returns the user's most recent answered guesses, newest first, as (author_id, correct)."""
+    return await asyncio.to_thread(_get_recent_quote_guesses_sync, user_id, limit)
 
 
 
@@ -2739,6 +2825,12 @@ async def _resolve_quote_author_name(guild: discord.Guild, author_id: int) -> st
     - left the server, account still exists -> their Discord username
     - account deleted entirely -> QUOTE_UNKNOWN_AUTHOR_LABEL ("php")
     """
+    # The php stand-in id only ever appears in stored stats, so it shows as
+    # php. The real alias accounts are NOT special-cased here: on a quote
+    # reveal they show their actual Discord username like anyone else.
+    if author_id == QUOTE_PHP_AUTHOR_ID:
+        return QUOTE_UNKNOWN_AUTHOR_LABEL
+
     member = guild.get_member(author_id)
     if member is not None:
         return member.name
@@ -2819,7 +2911,7 @@ async def quote_start(ctx: commands.Context):
         name_display = await _resolve_quote_author_name(ctx.guild, message.author.id)
         quote_round = QuoteRound(
             initiator_id=ctx.author.id,
-            author_id=message.author.id,
+            author_id=_normalize_quote_author_id(message.author.id),
             name_display=name_display,
             content=_decapitalize_first_letter(message.content),
             date_text=message.created_at.strftime("%B %d, %Y"),
@@ -2836,6 +2928,43 @@ def _format_ratio(correct: int, total: int) -> str:
     return f"{correct}/{total} - {pct}%"
 
 
+async def _aggregate_by_name(guild: discord.Guild, rows: list[tuple[int, int, int]]) -> dict[str, list[int]]:
+    """Takes [(author_id, correct, total), ...], resolves each author to the
+    name shown for them, and merges rows that end up with the same name so
+    every deleted account and php alias lands on a single "php" entry."""
+    names = await asyncio.gather(*(_resolve_quote_author_name(guild, aid) for aid, _, _ in rows))
+    by_name: dict[str, list[int]] = {}
+    for (_, correct, total), name in zip(rows, names):
+        entry = by_name.setdefault(name, [0, 0])
+        entry[0] += correct
+        entry[1] += total
+    return by_name
+
+
+def _chunk_description(header: str, lines: list[str], limit: int = 3900) -> list[str]:
+    """Splits a header + list of lines across as many embed descriptions as
+    needed (Discord caps a description at 4096 characters)."""
+    chunks: list[str] = []
+    current = header
+    for line in lines:
+        if len(current) + len(line) + 1 > limit:
+            chunks.append(current)
+            current = ""
+        current += line + "\n"
+    chunks.append(current)
+    return chunks
+
+
+async def _send_stat_embeds(ctx: commands.Context, title: str, header: str, lines: list[str], color: discord.Color):
+    for i, chunk in enumerate(_chunk_description(header, lines)):
+        embed = discord.Embed(
+            title=title if i == 0 else f"{title} (continued)",
+            description=chunk,
+            color=color,
+        )
+        await ctx.send(embed=embed)
+
+
 @bot.command(name="profile")
 async def quote_profile(ctx: commands.Context):
     """Shows the caller's overall !quote accuracy plus a per-person breakdown
@@ -2846,25 +2975,18 @@ async def quote_profile(ctx: commands.Context):
 
     rows = await get_quote_profile(ctx.author.id)
     streak, best_streak = await get_quote_streak_stats(ctx.author.id)
-
-    embed = discord.Embed(title=f"📊 {ctx.author.name}'s Quote Profile", color=discord.Color.blue())
+    title = f"📊 {ctx.author.name}'s Quote Profile"
 
     if not rows:
-        embed.description = "No guesses recorded yet — use `!q` and mark your answers to start tracking!"
-        await ctx.send(embed=embed)
+        await ctx.send(embed=discord.Embed(
+            title=title,
+            description="No guesses recorded yet — use `!q` and mark your answers to start tracking!",
+            color=discord.Color.blue(),
+        ))
         return
 
     async with ctx.typing():
-        names = await asyncio.gather(
-            *(_resolve_quote_author_name(ctx.guild, author_id) for author_id, _, _ in rows)
-        )
-
-    # Merge by displayed name so every deleted account ends up on one "php" line.
-    by_name: dict[str, list[int]] = {}
-    for (_, correct, total), name in zip(rows, names):
-        entry = by_name.setdefault(name, [0, 0])
-        entry[0] += correct
-        entry[1] += total
+        by_name = await _aggregate_by_name(ctx.guild, rows)
 
     overall_correct = sum(c for _, c, _ in rows)
     overall_total = sum(t for _, _, t in rows)
@@ -2873,21 +2995,82 @@ async def quote_profile(ctx: commands.Context):
         f"**{discord.utils.escape_markdown(name)}**: {_format_ratio(c, t)}"
         for name, (c, t) in sorted(by_name.items(), key=lambda kv: (-kv[1][1], kv[0].lower()))
     ]
-
     header = (
         f"**Overall: {_format_ratio(overall_correct, overall_total)}**\n"
         f"🔥 Current streak: {streak}  •  🏆 Longest streak: {best_streak}\n\n"
         f"**By person**\n"
     )
-    body = ""
-    for i, line in enumerate(lines):
-        if len(header) + len(body) + len(line) + 40 > 4000:  # embed description limit is 4096
-            body += f"...and {len(lines) - i} more"
-            break
-        body += line + "\n"
+    await _send_stat_embeds(ctx, title, header, lines, discord.Color.blue())
 
-    embed.description = header + body
-    await ctx.send(embed=embed)
+
+@bot.command(name="global")
+async def quote_global(ctx: commands.Context):
+    """Server-wide tally: across every guesser, how often each person's
+    quotes are guessed correctly, ranked best-guessed to worst-guessed."""
+    if ctx.guild is None:
+        await ctx.send("This only works in a server channel.")
+        return
+
+    rows = await get_quote_global_stats()
+    if not rows:
+        await ctx.send("No guesses have been recorded yet — use `!q` and mark your answers to start tracking!")
+        return
+
+    async with ctx.typing():
+        by_name = await _aggregate_by_name(ctx.guild, rows)
+
+    overall_correct = sum(c for _, c, _ in rows)
+    overall_total = sum(t for _, _, t in rows)
+
+    ranked = sorted(
+        by_name.items(),
+        key=lambda kv: (-(kv[1][0] / kv[1][1]), -kv[1][1], kv[0].lower()),
+    )
+    lines = [
+        f"{i}. **{discord.utils.escape_markdown(name)}**: {_format_ratio(c, t)}"
+        for i, (name, (c, t)) in enumerate(ranked, start=1)
+    ]
+    header = (
+        f"**Server overall: {_format_ratio(overall_correct, overall_total)}**\n\n"
+        f"**Best to worst guessed**\n"
+    )
+    await _send_stat_embeds(ctx, "🌍 Global Quote Stats", header, lines, discord.Color.green())
+
+
+@bot.command(name="p2")
+async def quote_recent(ctx: commands.Context):
+    """Like !profile, but only over the caller's most recent QUOTE_P2_WINDOW guesses."""
+    if ctx.guild is None:
+        await ctx.send("This only works in a server channel.")
+        return
+
+    recent = await get_recent_quote_guesses(ctx.author.id, QUOTE_P2_WINDOW)
+    if not recent:
+        await ctx.send("No guesses logged yet — guesses you mark from now on will show up here.")
+        return
+
+    per_author: dict[int, list[int]] = {}
+    for author_id, was_correct in recent:
+        entry = per_author.setdefault(author_id, [0, 0])
+        entry[0] += 1 if was_correct else 0
+        entry[1] += 1
+
+    async with ctx.typing():
+        by_name = await _aggregate_by_name(
+            ctx.guild, [(aid, c, t) for aid, (c, t) in per_author.items()]
+        )
+
+    n = len(recent)
+    correct = sum(1 for _, ok in recent if ok)
+    lines = [
+        f"**{discord.utils.escape_markdown(name)}**: {_format_ratio(c, t)}"
+        for name, (c, t) in sorted(by_name.items(), key=lambda kv: (-kv[1][1], kv[0].lower()))
+    ]
+    header = (
+        f"**Last {n} guess{'es' if n != 1 else ''}: {_format_ratio(correct, n)}**\n\n"
+        f"**By person**\n"
+    )
+    await _send_stat_embeds(ctx, f"📈 {ctx.author.name}'s Recent Guesses", header, lines, discord.Color.orange())
 
 
 
